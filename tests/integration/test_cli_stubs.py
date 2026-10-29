@@ -5,6 +5,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from lastro.cli import demo_cmd
 from lastro.cli.app import app
 from lastro.cli.state import CliState, get_state
 from lastro.cli.stubs import STUB_COMMANDS
@@ -68,3 +69,71 @@ def test_require_project_runs_command_with_valid_config(
 
     assert result.exit_code == 0, result.output
     assert executed == ["homolog"]
+
+
+ALL_COMMANDS = ["init", "doctor", "demo", *STUB_COMMANDS]
+
+
+def test_help_lists_all_eleven_commands(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert len(ALL_COMMANDS) == 11
+    listed = {line.strip("│| ").split(" ")[0] for line in result.stdout.splitlines()}
+    assert set(ALL_COMMANDS) <= listed
+
+
+def test_invalid_config_blocks_commands(
+    runner: CliRunner,
+    write_config: Callable[..., Path],
+    profile_toml: Callable[..., str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_config(profile_toml("homolog", extra='editable_fields = { employee = "phone" }'))
+    called: list[str] = []
+    monkeypatch.setattr(demo_cmd, "runner_loader", lambda: called.append("loaded"))
+
+    result = runner.invoke(app, ["demo", "up"])
+
+    assert result.exit_code == 2
+    assert called == []
+    assert (
+        "lastro.toml › profiles.homolog.editable_fields.employee: "
+        "expected list of field names, got string"
+    ) in result.stderr
+    assert "nenhum comando foi executado" in result.stderr
+
+
+def test_version_and_init_work_with_invalid_config(
+    runner: CliRunner,
+    write_config: Callable[..., Path],
+    workdir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bad = write_config("profiles = 1\n", workdir / "outro")
+    project = workdir / "novo"
+    project.mkdir()
+    version = runner.invoke(app, ["--config", str(bad), "--version"])
+    assert version.exit_code == 0
+
+    monkeypatch.chdir(project)
+    result = runner.invoke(
+        app,
+        [
+            "--config",
+            str(bad),
+            "init",
+            "--name",
+            "homolog",
+            "--target-url",
+            "https://alvo.example.test",
+            "--login-url",
+            "https://alvo.example.test/login",
+            "--tenant",
+            "acme",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (project / "lastro.toml").is_file()
+    assert "nenhum comando foi executado" not in result.output
