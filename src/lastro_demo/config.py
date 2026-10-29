@@ -29,6 +29,10 @@ DEFAULT_RANDOM_SEED = 20240611
 
 DB_FILENAME = "demo.sqlite3"
 ACCESS_LOG_FILENAME = "access.log"
+SERVER_LOG_FILENAME = "server.log"
+STATE_FILENAME = "server.json"
+SHUTDOWN_FILENAME = "shutdown.request"
+SERVER_PID_FILENAME = "server.pid"
 
 
 def read_package_text(*parts: str) -> str:
