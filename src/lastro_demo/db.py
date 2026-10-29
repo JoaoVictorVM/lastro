@@ -42,7 +42,9 @@ DATA_TABLES = ("employees", "user_clinics", "users", "clinics")
 
 
 def connect(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(path, isolation_level=None)
+    # Dependências síncronas do FastAPI abrem a conexão numa thread e a rota assíncrona a usa
+    # em outra; o uso continua sequencial dentro de cada requisição.
+    conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 5000")

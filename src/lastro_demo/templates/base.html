@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Cadastro de Funcionários{% endblock %} | {% if tenant %}{{ tenant.name }}{% else %}Clínicas{% endif %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Cadastro de Funcionários</a>
+    {% if user %}
+    <nav aria-label="Sessão">
+      <span class="who">{{ user.display_name }}{% if tenant %} · <strong id="active-clinic">{{ tenant.name }}</strong>{% endif %}</span>
+      {% if user.clinics|length > 1 %}<a href="/select-clinic">Trocar clínica</a>{% endif %}
+      <form method="post" action="/logout" class="inline">
+        <button type="submit" class="link">Sair</button>
+      </form>
+    </nav>
+    {% endif %}
+  </header>
+  <main>
+    {% if flash %}<p class="flash" role="status">{{ flash }}</p>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

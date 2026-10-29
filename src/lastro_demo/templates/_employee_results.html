@@ -1,0 +1,35 @@
+{% macro sort_link(key, label) -%}
+{%- set next_dir = "desc" if sort == key and dir == "asc" else "asc" -%}
+<a href="/employees?q={{ q|urlencode }}&amp;sort={{ key }}&amp;dir={{ next_dir }}"
+   hx-get="/employees?q={{ q|urlencode }}&amp;sort={{ key }}&amp;dir={{ next_dir }}"
+   hx-target="#employee-results" hx-push-url="true">{{ label }}{% if sort == key %} {{ "▲" if dir == "asc" else "▼" }}{% endif %}</a>
+{%- endmacro %}
+<p class="count" id="employee-count">{{ employees|length }} funcionário(s)</p>
+<table class="employees" aria-label="Funcionários">
+  <thead>
+    <tr>
+      <th scope="col">{{ sort_link("name", "Nome") }}</th>
+      <th scope="col">CPF</th>
+      <th scope="col">E-mail</th>
+      <th scope="col">{{ sort_link("role", "Perfil") }}</th>
+      <th scope="col">{{ sort_link("hire_date", "Data de admissão") }}</th>
+      <th scope="col">{{ sort_link("status", "Status") }}</th>
+      <th scope="col">Ações</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for employee in employees %}
+    <tr data-employee-id="{{ employee.id }}">
+      <td class="name"><a href="/employees/{{ employee.id }}">{{ employee.full_name }}</a></td>
+      <td class="cpf">{{ employee.cpf }}</td>
+      <td class="email">{{ employee.email }}</td>
+      <td class="role">{{ employee.role_label }}</td>
+      <td class="hire-date">{{ employee.hire_date }}</td>
+      <td class="status">{{ employee.status_label }}</td>
+      <td><a href="/employees/{{ employee.id }}/edit">Editar</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="empty">Nenhum funcionário encontrado.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
