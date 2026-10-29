@@ -1,0 +1,45 @@
+name: Feature request
+description: Propose a new capability or an improvement for Lastro.
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem before the solution. Do not include private data, credentials or
+        details of systems you are not allowed to share.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What should be possible once this exists? How would you know it works?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Who needs this, how often, and any constraints (executor, OS, target system).
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds or other approaches you have tried or considered.
+    validations:
+      required: true
+  - type: checkboxes
+    id: no-private-data
+    attributes:
+      label: Data safety
+      options:
+        - label: This request contains no secrets, session material or private data.
+          required: true

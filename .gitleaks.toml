@@ -1,0 +1,13 @@
+# Gitleaks configuration: default rules plus reviewed allowlist entries only.
+# Policy (see SECURITY.md): an entry is allowed only for a reviewed false positive, never to make
+# CI pass, and must explain here why the match is not a secret.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fictitious demo login passwords"
+# These are the deliberately fake defaults of the bundled demo, published in
+# src/lastro_demo/.env.example and asserted by the demo tests. They protect nothing real.
+regexTarget = "secret"
+regexes = ['''^senha-falsa-(aurora|boreal|multi)-123$''']

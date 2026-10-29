@@ -1,0 +1,2 @@
+{{- range . }}gitleaks: secret detected in {{ .File }}:{{ .StartLine }} ({{ .RuleID }}). Remove it or add a reviewed allowlist entry.
+{{ end -}}

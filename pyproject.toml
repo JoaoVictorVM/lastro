@@ -52,10 +52,20 @@ venv = ".venv"
 testpaths = ["tests"]
 addopts = ["-ra", "--import-mode=importlib"]
 
+[tool.coverage.run]
+source_pkgs = ["lastro", "lastro_demo"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.2",
     "pyright>=1.1.414",
     "pytest>=9.2.0",
+    "pytest-cov>=7.0.0",
     "pyyaml>=6.0.3",
     "ruff>=0.17.3",
 ]

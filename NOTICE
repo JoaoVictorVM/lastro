@@ -1,0 +1,12 @@
+Lastro
+Copyright 2026 Joao Victor Ventura Martins
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes software developed by third parties:
+
+- htmx 2.0.11, Copyright Big Sky Software, distributed under the BSD Zero Clause
+  License (0BSD). Bundled unmodified as src/lastro_demo/static/htmx.min.js.
+
+The complete inventory of third-party components, with versions, licenses and
+modifications, is maintained in THIRD_PARTY_NOTICES.md.
