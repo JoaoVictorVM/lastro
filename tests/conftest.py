@@ -1,5 +1,5 @@
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -31,3 +31,36 @@ def workdir(isolated_env: Path) -> Path:
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+def profile_block(name: str = "homolog", extra: str = "", credentials_prefix: str = "") -> str:
+    prefix = credentials_prefix or name.upper().replace("-", "_")
+    return f"""
+[profiles.{name}]
+target_url = "https://{name}.example.test"
+login_url = "https://{name}.example.test/login"
+tenant_id = "acme"
+allowed_entities = ["employee"]
+{extra}
+
+[profiles.{name}.credentials]
+username_env = "{prefix}_USERNAME"
+password_env = "{prefix}_PASSWORD"
+"""
+
+
+@pytest.fixture
+def write_config(workdir: Path) -> Callable[..., Path]:
+    def write(text: str, directory: Path | None = None) -> Path:
+        target_dir = directory or workdir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        path = target_dir / "lastro.toml"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    return write
+
+
+@pytest.fixture
+def profile_toml() -> Callable[..., str]:
+    return profile_block

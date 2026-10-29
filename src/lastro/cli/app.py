@@ -1,7 +1,6 @@
 """Raiz da CLI: opções globais e registro de todos os comandos."""
 
 import platform
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
@@ -9,6 +8,7 @@ import typer
 
 from lastro import get_version
 from lastro.cli import stubs
+from lastro.cli.state import CliState
 
 app = typer.Typer(
     name="lastro",
@@ -17,12 +17,6 @@ app = typer.Typer(
     add_completion=False,
     pretty_exceptions_enable=False,
 )
-
-
-@dataclass
-class CliState:
-    profile: str | None = None
-    config_path: Path | None = None
 
 
 def version_line() -> str:
