@@ -1,0 +1,105 @@
+# Lastro ignore policy. Every sensitive pattern below is covered by tests/repository/test_gitignore.py.
+# Public media exceptions come first so that the sensitive patterns further down still apply
+# inside the excepted folders (a later match always wins in gitignore).
+
+# Evidence media outside public docs
+*.webm
+*.mp4
+*.png
+!docs/assets/**
+# The demo static files live in the package layout, not in a top-level demo/static/ folder.
+!src/lastro_demo/static/**
+!evals/results/public/**/*.png
+
+# Secrets and environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+!tests/fixtures/certs/**/*.crt
+!tests/fixtures/certs/**/*.pem
+id_rsa*
+id_ed25519*
+credentials*.json
+secrets.*
+*.secret
+
+# Browser session material (cookies, tokens, network captures)
+storage_state*.json
+.auth/
+auth/
+*.har
+trace.zip
+*.trace.zip
+test-results/
+playwright-report/
+.playwright-mcp/
+
+# Lastro private data when the private data root is overridden into a repository
+.lastro/
+lastro-data/
+runs/
+evidence/
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+
+# Imported content and indexes
+issue-snapshots/
+source-cache/
+index/
+*.faiss
+*.vec
+
+# Evaluation outputs (sanitized results in evals/results/public/ are committed on purpose)
+evals/results/private/
+
+# Executor local settings
+.claude/settings.local.json
+CLAUDE.local.md
+.codex/
+.mcp.local.json
+
+# Observability local stack
+.langfuse/
+docker-data/
+langfuse.env
+
+# Logs
+*.log
+logs/
+
+# Python and tooling
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Editors and OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
