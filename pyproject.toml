@@ -5,11 +5,16 @@ description = "Agente de exploração de sistemas web com políticas, histórico
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.162.0",
     "httpx>=0.28.1",
+    "itsdangerous>=2.2.0",
+    "jinja2>=3.1.6",
     "pydantic>=2.14.1",
     "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.32",
     "typer>=0.27.3",
     "tzdata>=2026.6",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
@@ -51,5 +56,6 @@ addopts = ["-ra", "--import-mode=importlib"]
 dev = [
     "pyright>=1.1.414",
     "pytest>=9.2.0",
+    "pyyaml>=6.0.3",
     "ruff>=0.17.3",
 ]
