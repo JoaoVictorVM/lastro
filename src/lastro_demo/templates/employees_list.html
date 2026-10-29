@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Funcionários{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="heading">
+    <h1>Funcionários</h1>
+    <a class="button" href="/employees/new">Novo funcionário</a>
+  </div>
+  <form method="get" action="/employees" class="filters" role="search"
+        hx-get="/employees" hx-target="#employee-results" hx-push-url="true"
+        hx-trigger="submit, input changed delay:400ms from:#q, change from:select">
+    <label for="q">Buscar</label>
+    <input id="q" name="q" type="search" value="{{ q }}" placeholder="Nome, CPF ou e-mail">
+    <label for="sort">Ordenar por</label>
+    <select id="sort" name="sort">
+      {% for key, label in [("name", "Nome"), ("role", "Perfil"), ("hire_date", "Data de admissão"), ("status", "Status")] %}
+      <option value="{{ key }}"{% if sort == key %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <label for="dir">Direção</label>
+    <select id="dir" name="dir">
+      <option value="asc"{% if dir == "asc" %} selected{% endif %}>Crescente</option>
+      <option value="desc"{% if dir == "desc" %} selected{% endif %}>Decrescente</option>
+    </select>
+    <button type="submit">Buscar</button>
+  </form>
+  <div id="employee-results">
+    {% include "_employee_results.html" %}
+  </div>
+</section>
+{% endblock %}

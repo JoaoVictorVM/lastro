@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{% if employee %}Editar funcionário{% else %}Novo funcionário{% endif %}{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>{% if employee %}Editar funcionário{% else %}Novo funcionário{% endif %}</h1>
+  {% if errors %}<p class="error" role="alert">Corrija os campos destacados.</p>{% endif %}
+  <form method="post" action="{{ action }}" id="employee-form" novalidate>
+    {% macro field_error(name) -%}
+    {% if errors.get(name) %}<span class="field-error" id="{{ name }}-error">{{ errors[name] }}</span>{% endif %}
+    {%- endmacro %}
+    <label for="full_name">Nome completo</label>
+    <input id="full_name" name="full_name" type="text" value="{{ values.full_name }}"{% if errors.get("full_name") %} aria-invalid="true" aria-describedby="full_name-error"{% endif %}>
+    {{ field_error("full_name") }}
+
+    <label for="cpf">CPF</label>
+    <input id="cpf" name="cpf" type="text" value="{{ values.cpf }}" placeholder="000.000.000-00"{% if errors.get("cpf") %} aria-invalid="true" aria-describedby="cpf-error"{% endif %}>
+    {{ field_error("cpf") }}
+
+    <label for="email">E-mail</label>
+    <input id="email" name="email" type="email" value="{{ values.email }}"{% if errors.get("email") %} aria-invalid="true" aria-describedby="email-error"{% endif %}>
+    {{ field_error("email") }}
+
+    <label for="phone">Telefone</label>
+    <input id="phone" name="phone" type="tel" value="{{ values.phone }}" placeholder="(11) 91234-5678"{% if errors.get("phone") %} aria-invalid="true" aria-describedby="phone-error"{% endif %}>
+    {{ field_error("phone") }}
+
+    <label for="role">Perfil</label>
+    <select id="role" name="role"{% if errors.get("role") %} aria-invalid="true" aria-describedby="role-error"{% endif %}>
+      <option value="">Selecione</option>
+      {% for slug, label in roles.items() %}
+      <option value="{{ slug }}"{% if values.role == slug %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    {{ field_error("role") }}
+
+    <label for="hire_date">Data de admissão</label>
+    <input id="hire_date" name="hire_date" type="date" value="{{ values.hire_date }}"{% if errors.get("hire_date") %} aria-invalid="true" aria-describedby="hire_date-error"{% endif %}>
+    {{ field_error("hire_date") }}
+
+    <label for="status">Status</label>
+    <select id="status" name="status">
+      {% for slug, label in statuses.items() %}
+      <option value="{{ slug }}"{% if values.status == slug %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    {{ field_error("status") }}
+
+    <div class="actions" id="form-actions">
+      <button type="submit" id="save-button">Salvar</button>
+      {% if show_deactivate and employee %}<button type="submit" id="deactivate-button" class="danger" formaction="/employees/{{ employee.id }}/deactivate" formmethod="post" formnovalidate>Inativar</button>{% endif %}
+      <a href="{% if employee %}/employees/{{ employee.id }}{% else %}/employees{% endif %}">Cancelar</a>
+    </div>
+  </form>
+</section>
+{% if employee %}
+<script>
+  window.employeeName = {{ name_literal }};
+  document.title = "Editar " + window.employeeName;
+</script>
+{% endif %}
+{% endblock %}

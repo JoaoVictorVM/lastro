@@ -1,0 +1,32 @@
+{
+  "clinics": [
+    { "id": "aurora", "name": "Clínica Aurora" },
+    { "id": "boreal", "name": "Clínica Boreal" }
+  ],
+  "users": [
+    {
+      "key": "aurora",
+      "display_name": "Usuário Teste Aurora",
+      "clinics": ["aurora"],
+      "user_env": "DEMO_AURORA_USER",
+      "password_env": "DEMO_AURORA_PASSWORD",
+      "announce": true
+    },
+    {
+      "key": "boreal",
+      "display_name": "Usuário Teste Boreal",
+      "clinics": ["boreal"],
+      "user_env": "DEMO_BOREAL_USER",
+      "password_env": "DEMO_BOREAL_PASSWORD",
+      "announce": true
+    },
+    {
+      "key": "multi",
+      "display_name": "Usuário Teste Multiclínica",
+      "clinics": ["aurora", "boreal"],
+      "user_env": "DEMO_MULTI_USER",
+      "password_env": "DEMO_MULTI_PASSWORD",
+      "announce": false
+    }
+  ]
+}

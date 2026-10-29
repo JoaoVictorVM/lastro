@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ employee.full_name }}{% endblock %}
+{% block content %}
+<section class="card">
+  <h1 id="employee-name">{{ employee.full_name }}</h1>
+  <dl class="details" data-employee-id="{{ employee.id }}">
+    <dt>CPF</dt><dd id="employee-cpf">{{ employee.cpf }}</dd>
+    <dt>E-mail</dt><dd id="employee-email">{{ employee.email }}</dd>
+    <dt>Telefone</dt><dd id="employee-phone">{{ employee.phone or "Não informado" }}</dd>
+    <dt>Perfil</dt><dd id="employee-role">{{ employee.role_label }}</dd>
+    <dt>Data de admissão</dt><dd id="employee-hire-date">{{ employee.hire_date }}</dd>
+    <dt>Status</dt><dd id="employee-status">{{ employee.status_label }}</dd>
+  </dl>
+  <div class="actions">
+    <a class="button" href="/employees/{{ employee.id }}/edit">Editar</a>
+    <a href="/employees">Voltar para a lista</a>
+  </div>
+</section>
+{% endblock %}

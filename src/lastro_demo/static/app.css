@@ -1,0 +1,55 @@
+:root {
+  --ink: #1f2933;
+  --muted: #616e7c;
+  --line: #d9e2ec;
+  --accent: #0b6e4f;
+  --danger: #b42318;
+  --bg: #f5f7fa;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+body { margin: 0; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+
+.topbar {
+  display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  padding: 12px 24px; background: #fff; border-bottom: 1px solid var(--line);
+}
+.topbar nav { display: flex; align-items: center; gap: 16px; }
+.brand { font-weight: 700; color: var(--accent); text-decoration: none; }
+.who { color: var(--muted); }
+
+.card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 24px; }
+.narrow { max-width: 420px; margin: 40px auto; }
+.heading { display: flex; justify-content: space-between; align-items: center; }
+
+form label { display: block; margin-top: 12px; font-weight: 600; }
+form input, form select { width: 100%; max-width: 420px; padding: 8px; border: 1px solid var(--line); border-radius: 4px; box-sizing: border-box; }
+form.inline { display: inline; }
+.filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; margin-bottom: 16px; }
+.filters label { margin-top: 0; }
+.filters input, .filters select { width: auto; }
+
+button, .button {
+  display: inline-block; padding: 8px 16px; border: 0; border-radius: 4px;
+  background: var(--accent); color: #fff; font: inherit; cursor: pointer; text-decoration: none;
+}
+button.link { background: none; color: var(--accent); padding: 0; }
+button.danger { background: var(--danger); }
+.actions { display: flex; gap: 12px; align-items: center; margin-top: 20px; }
+
+.flash { background: #e3f9e5; border: 1px solid #91d8a0; padding: 10px 14px; border-radius: 4px; }
+.error { color: var(--danger); }
+.field-error { display: block; color: var(--danger); font-size: 0.9em; margin-top: 4px; }
+
+table.employees { width: 100%; border-collapse: collapse; }
+table.employees th, table.employees td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); }
+table.employees th a { color: inherit; }
+.count { color: var(--muted); }
+.empty { color: var(--muted); text-align: center; }
+
+dl.details { display: grid; grid-template-columns: max-content 1fr; gap: 8px 24px; }
+dl.details dt { font-weight: 600; }
+dl.details dd { margin: 0; }
