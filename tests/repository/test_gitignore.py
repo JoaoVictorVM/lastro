@@ -32,7 +32,9 @@ SENSITIVE_SAMPLES: tuple[str, ...] = (
     "storage_state.json",
     "storage_state-aurora.json",
     ".auth/state.json",
+    "src/lastro/.auth/state.json",
     "auth/cookies.json",
+    "somewhere/auth/cookies.json",
     "captures/session.har",
     "trace.zip",
     "runs-export/login.trace.zip",
@@ -62,6 +64,7 @@ SENSITIVE_SAMPLES: tuple[str, ...] = (
     "issue-snapshots/123.json",
     "source-cache/app.py.txt",
     "index/chunks.json",
+    "somewhere/index/chunks.json",
     "vectors.faiss",
     "embeddings.vec",
     # Evaluation outputs
@@ -108,6 +111,11 @@ SENSITIVE_SAMPLES: tuple[str, ...] = (
     "docs/assets/deploy.key",
     "src/lastro_demo/static/server.pem",
     "evals/results/public/.env",
+    "src/lastro/auth/.env",
+    "src/lastro/auth/session.key",
+    "src/lastro/auth/storage_state.json",
+    "src/lastro/index/registry.db",
+    "src/lastro/index/vectors.faiss",
 )
 
 PUBLIC_SAMPLES: tuple[str, ...] = (
@@ -123,6 +131,8 @@ PUBLIC_SAMPLES: tuple[str, ...] = (
     "evals/results/public/summary.json",
     "evals/results/public/chart.png",
     ".vscode/extensions.json",
+    "src/lastro/auth/x.py",
+    "src/lastro/index/x.py",
 )
 
 
@@ -198,6 +208,22 @@ def test_public_eval_results_are_not_ignored(ignored: frozenset[str]) -> None:
 def test_vscode_extensions_is_not_ignored(ignored: frozenset[str]) -> None:
     assert ".vscode/extensions.json" not in ignored
     assert ".vscode/settings.json" in ignored
+
+
+def test_source_packages_named_auth_or_index_are_not_ignored(ignored: frozenset[str]) -> None:
+    assert "src/lastro/auth/x.py" not in ignored
+    assert "src/lastro/index/x.py" not in ignored
+    for sample in (
+        "auth/cookies.json",
+        "somewhere/auth/cookies.json",
+        "index/chunks.json",
+        "somewhere/index/chunks.json",
+        ".auth/state.json",
+        "src/lastro/.auth/state.json",
+        "src/lastro/auth/.env",
+        "src/lastro/index/registry.db",
+    ):
+        assert sample in ignored, sample
 
 
 def test_planning_artifacts_remain_local() -> None:

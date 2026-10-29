@@ -32,6 +32,8 @@ secrets.*
 storage_state*.json
 .auth/
 auth/
+# Source packages may be named auth; files inside them still go through every other pattern.
+!src/**/auth/
 *.har
 trace.zip
 *.trace.zip
@@ -57,6 +59,8 @@ evidence/
 issue-snapshots/
 source-cache/
 index/
+# Source packages may be named index; files inside them still go through every other pattern.
+!src/**/index/
 *.faiss
 *.vec
 
