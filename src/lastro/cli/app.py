@@ -7,7 +7,7 @@ from typing import Annotated
 import typer
 
 from lastro import get_version
-from lastro.cli import stubs
+from lastro.cli import doctor_cmd, init_cmd, stubs
 from lastro.cli.state import CliState
 
 app = typer.Typer(
@@ -54,6 +54,8 @@ def root(
     ctx.obj = CliState(profile=profile, config_path=config)
 
 
+app.command(name="init")(init_cmd.init)
+app.command(name="doctor")(doctor_cmd.doctor)
 stubs.register(app)
 
 

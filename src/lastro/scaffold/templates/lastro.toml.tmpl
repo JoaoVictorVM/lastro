@@ -1,0 +1,44 @@
+# Configuração do Lastro para este projeto. Este arquivo pode ser versionado:
+# ele guarda apenas nomes de variáveis de ambiente, nunca valores de credenciais.
+
+# Fuso usado para exibir horários (nome IANA). O armazenamento é sempre em UTC.
+timezone = "America/Sao_Paulo"
+
+# Executor cuja CLI o lastro doctor procura no PATH.
+executor = "claude-code"
+
+# Pasta dos dados privados (sessões, evidências, histórico). O padrão da plataforma fica
+# fora do repositório; só descomente para usar outro local, também fora do Git.
+# private_data_root = "~/dados-lastro"
+
+# Porta do demo local (lastro demo up). Padrão: 8765.
+# [demo]
+# port = 8765
+
+# Perfis de ambiente (até 10). Selecione com --profile <nome> quando houver mais de um.
+[profiles.${profile_name}]
+# URL base do sistema sob teste. A navegação fica restrita a ela.
+target_url = ${target_url}
+# Página de login usada pela autenticação scriptada.
+login_url = ${login_url}
+# Identificador do tenant esperado depois do login.
+tenant_id = ${tenant_id}
+# Nome do tenant exibido em relatórios.
+tenant_display_name = ${tenant_id}
+# Endpoint que informa a versão do sistema alvo (caminho ou URL). Opcional.
+# version_endpoint = "/api/version"
+# Entidades que o agente pode tocar.
+allowed_entities = []
+# Métodos HTTP sempre bloqueados.
+denied_methods = ["DELETE"]
+# Padrões de endpoints sempre bloqueados.
+denied_endpoint_patterns = []
+
+# Nomes das variáveis de ambiente com usuário e senha. Os valores ficam no .env.
+[profiles.${profile_name}.credentials]
+username_env = ${username_env}
+password_env = ${password_env}
+
+# Campos editáveis por entidade. Cada entidade precisa estar em allowed_entities.
+[profiles.${profile_name}.editable_fields]
+# employee = ["phone", "email"]
