@@ -1,0 +1,74 @@
+name: Bug report
+description: Report something in Lastro that does not work as documented.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Never paste real credentials, session cookies, tokens, HAR files,
+        traces or personal data from any system. To report a vulnerability, follow SECURITY.md
+        instead of opening a public issue.
+  - type: input
+    id: version
+    attributes:
+      label: Lastro version
+      description: Output of `lastro --version`.
+      placeholder: lastro 0.1.0 (python 3.12.4, Windows-11)
+    validations:
+      required: true
+  - type: dropdown
+    id: executor
+    attributes:
+      label: Executor
+      description: Agent executor in use, if any.
+      options:
+        - Claude Code
+        - Codex
+        - Native executor
+        - None (CLI or demo only)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Ubuntu 24.04
+        - Other Linux
+        - macOS
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Commands and actions, in order. Use fictitious data.
+      placeholder: |
+        1. Run `lastro demo up`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Include error messages and relevant output with secrets removed.
+    validations:
+      required: true
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Data safety
+      options:
+        - label: This report contains no secrets, session material or personal data.
+          required: true
