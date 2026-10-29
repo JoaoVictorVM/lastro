@@ -74,6 +74,7 @@ def _form_page(
         "errors": errors,
         "employee": employee,
         "action": f"/employees/{employee.id}" if employee else "/employees",
+        "show_deactivate": ctx.runtime.flags.scenario("s02"),
     }
     if employee is not None:
         context["name_literal"] = employees.script_name_literal(employee.full_name, ctx.runtime)
