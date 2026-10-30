@@ -15,10 +15,13 @@ from lastro.config.errors import (
     format_validation_error,
 )
 from lastro.config.schema import LastroConfig, Profile
-from lastro.paths import profile_data_dir, resolve_private_data_root
+from lastro.paths import profile_data_dir, project_data_dir, resolve_private_data_root
 
 CONFIG_FILENAME = "lastro.toml"
 ENV_FILENAME = ".env"
+MISSING_PROJECT_ID_MESSAGE = (
+    "Este projeto ainda não possui project_id. Execute 'lastro init' para migrar o lastro.toml."
+)
 
 
 class ConfigNotFoundError(ConfigError):
@@ -27,6 +30,11 @@ class ConfigNotFoundError(ConfigError):
 
 class ProfileSelectionError(ConfigError):
     pass
+
+
+class MissingProjectIdError(ConfigError):
+    def __init__(self) -> None:
+        super().__init__([MISSING_PROJECT_ID_MESSAGE])
 
 
 def find_config(start: Path) -> Path | None:
@@ -121,6 +129,20 @@ class LoadedConfig:
     def private_data_root(self) -> Path:
         return resolve_private_data_root(self.config.private_data_root, self.project_dir)
 
+    @property
+    def project_id(self) -> str | None:
+        return self.config.project_id
+
+    def require_project_id(self) -> str:
+        if self.config.project_id is None:
+            raise MissingProjectIdError()
+        return self.config.project_id
+
+    @property
+    def project_data_dir(self) -> Path:
+        """Pasta privada do projeto, comum a todos os perfis; exige project_id persistido."""
+        return project_data_dir(self.private_data_root, self.require_project_id())
+
 
 @dataclass(frozen=True)
 class ProjectContext:
@@ -148,6 +170,17 @@ class ProjectContext:
     @property
     def profile_dir(self) -> Path:
         return profile_data_dir(self.private_data_root, self.profile.name)
+
+    @property
+    def project_id(self) -> str | None:
+        return self.loaded.project_id
+
+    def require_project_id(self) -> str:
+        return self.loaded.require_project_id()
+
+    @property
+    def project_data_dir(self) -> Path:
+        return self.loaded.project_data_dir
 
     @property
     def timezone(self) -> str:

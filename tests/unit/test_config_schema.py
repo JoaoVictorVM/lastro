@@ -133,3 +133,24 @@ def test_run_limits_accept_basic_types_only() -> None:
     with pytest.raises(ValidationError) as excinfo:
         LastroConfig.model_validate({"profiles": {"h": _profile(run_limits={"x": [1]})}})
     assert ("profiles", "h", "run_limits") in _locs(excinfo.value)
+
+
+def test_project_id_is_optional_and_canonical_when_present() -> None:
+    project_id = "3f0c9a52-6b1e-4d8e-9a77-2a4f1c0d5e61"
+
+    assert LastroConfig.model_validate({"profiles": {"homolog": _profile()}}).project_id is None
+    config = LastroConfig.model_validate(
+        {"project_id": project_id, "profiles": {"homolog": _profile()}}
+    )
+    assert config.project_id == project_id
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["3F0C9A52-6B1E-4D8E-9A77-2A4F1C0D5E61", "3f0c9a526b1e4d8e9a772a4f1c0d5e61", "projeto", ""],
+)
+def test_non_canonical_project_id_rejected(value: str) -> None:
+    with pytest.raises(ValidationError) as info:
+        LastroConfig.model_validate({"project_id": value, "profiles": {"homolog": _profile()}})
+
+    assert _locs(info.value) == [("project_id",)]

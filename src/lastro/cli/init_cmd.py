@@ -11,7 +11,13 @@ from lastro.config.errors import ConfigError
 from lastro.config.loader import load_config
 from lastro.config.schema import PROFILE_NAME_MAX_LENGTH, is_http_url, is_valid_profile_name
 from lastro.paths import ensure_writable, is_inside_git_tree, resolve_private_data_root
-from lastro.scaffold.files import CONFIG_FILE, InitAnswers, write_scaffold
+from lastro.scaffold.files import (
+    CONFIG_FILE,
+    InitAnswers,
+    ProjectIdMigration,
+    add_project_id,
+    write_scaffold,
+)
 
 
 def validate_profile_name(value: str) -> str:
@@ -73,6 +79,24 @@ def _private_root_for(project_dir: Path) -> Path:
     return resolve_private_data_root(override, project_dir)
 
 
+def _migrate_project_id(project_dir: Path) -> None:
+    config_path = project_dir / CONFIG_FILE
+    try:
+        load_config(config_path)
+    except ConfigError:
+        output.error(f"{CONFIG_FILE.as_posix()} inválido: project_id não foi adicionado.")
+        return
+    try:
+        migration = add_project_id(config_path)
+    except (OSError, ValueError) as exc:
+        output.error(f"Não foi possível adicionar project_id em {CONFIG_FILE.as_posix()}: {exc}")
+        return
+    if migration is ProjectIdMigration.ADDED:
+        output.info(f"Migrado: {CONFIG_FILE.as_posix()} (project_id adicionado)")
+    else:
+        output.info(f"project_id existente preservado em {CONFIG_FILE.as_posix()}")
+
+
 def init(
     name: Annotated[
         str | None,
@@ -105,7 +129,11 @@ def init(
         ),
     ] = None,
 ) -> None:
-    """Cria lastro.toml, .env.example, a permissão do executor, missions/ e o private data root."""
+    """Cria lastro.toml, .env.example, a permissão do executor, missions/ e o private data root.
+
+    Em um projeto existente, acrescenta o project_id ausente ao lastro.toml sem mudar os demais
+    valores.
+    """
     answers = InitAnswers(
         profile_name=_ask(0, name),
         target_url=_ask(1, target_url),
@@ -119,6 +147,8 @@ def init(
         output.info(f"Criado: {relative.as_posix()}")
     for relative in result.preserved:
         output.info(f"Preservado (já existia): {relative.as_posix()}")
+    if CONFIG_FILE in result.preserved:
+        _migrate_project_id(project_dir)
 
     root = _private_root_for(project_dir)
     try:

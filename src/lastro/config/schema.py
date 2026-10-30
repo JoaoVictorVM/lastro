@@ -1,6 +1,7 @@
 """Schemas da configuração do projeto (lastro.toml)."""
 
 import re
+import uuid
 from typing import Annotated, Self
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -49,6 +50,23 @@ def _env_var_name(value: str) -> str:
         raise PydanticCustomError(
             "lastro_env_var_name", "expected environment variable name matching [A-Z_][A-Z0-9_]*"
         )
+    return value
+
+
+def is_canonical_project_id(value: str) -> bool:
+    try:
+        return str(uuid.UUID(value)) == value
+    except ValueError:
+        return False
+
+
+def new_project_id() -> str:
+    return str(uuid.uuid4())
+
+
+def _project_id(value: str) -> str:
+    if not is_canonical_project_id(value):
+        raise PydanticCustomError("lastro_project_id", "expected UUID in canonical lowercase form")
     return value
 
 
@@ -161,6 +179,9 @@ class DemoSettings(BaseModel):
 class LastroConfig(BaseModel):
     model_config = _STRICT
 
+    # Opcional no schema para que projetos anteriores ainda carreguem e possam ser migrados por
+    # lastro init; os comandos do histórico exigem o valor antes de qualquer efeito.
+    project_id: Annotated[str, AfterValidator(_project_id)] | None = None
     timezone: str = DEFAULT_TIMEZONE
     private_data_root: str | None = None
     executor: NonEmptyText = DEFAULT_EXECUTOR
