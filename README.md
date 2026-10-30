@@ -85,7 +85,7 @@ No evaluation has been run yet, so this table intentionally shows no numbers. Ev
 
 ## Run history and backup
 
-Every run is recorded in a SQLite database at `<private data root>/<project_id>/history.sqlite`, next to one folder per run under `runs/`. The `project_id` lives in `lastro.toml` and is shared by all profiles of the project. Projects created before it existed are migrated by running `lastro init` again, which adds only that field and keeps every other value.
+Every run is recorded in a SQLite database at `<private data root>/<project_id>/history.sqlite`, next to one folder per run under `runs/`. The `project_id` lives in `lastro.toml` and is shared by all profiles of the project. Projects created before it existed are migrated by running `lastro init` in the project folder: with a valid `lastro.toml` that has no `project_id`, it asks no questions, adds only that field, keeps every other value and exits successfully. Running it again later never changes an existing `project_id`.
 
 - `lastro --profile <name> run start --mission "..."` (or `--mission-file missions/<file>.md`) records the run before anything touches the target system and prints the run id and folder.
 - `lastro tail [run id]` follows the events of the active run, or of the given run.

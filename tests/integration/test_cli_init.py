@@ -156,10 +156,15 @@ def test_init_migrates_missing_project_id_and_preserves_all_other_values(
     config.write_text(LEGACY_CONFIG, encoding="utf-8")
     before = tomllib.loads(LEGACY_CONFIG)
 
-    result = runner.invoke(app, FLAGS)
+    result = runner.invoke(app, ["init"], input="")
 
-    assert "Migrado: lastro.toml (project_id adicionado)" in result.stdout
-    assert "Preservado (já existia): lastro.toml" in result.stdout
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "Migrado: lastro.toml (project_id adicionado; demais valores preservados)"
+    ]
+    for prompt in PROMPTS:
+        assert prompt not in result.output
+    assert sorted(path.name for path in workdir.iterdir()) == ["lastro.toml"]
     text = config.read_text(encoding="utf-8")
     after = tomllib.loads(text)
     project_id = after.pop("project_id")
@@ -172,24 +177,41 @@ def test_init_migrates_missing_project_id_and_preserves_all_other_values(
     assert list(loaded.profiles) == ["homolog", "local"]
 
 
-def test_init_preserves_existing_project_id(runner: CliRunner, workdir: Path) -> None:
+def test_init_migration_ignores_scaffold_flags(runner: CliRunner, workdir: Path) -> None:
     config = workdir / "lastro.toml"
     config.write_text(LEGACY_CONFIG, encoding="utf-8")
-    runner.invoke(app, FLAGS)
-    migrated = config.read_bytes()
 
     result = runner.invoke(app, FLAGS)
 
-    assert "project_id existente preservado em lastro.toml" in result.stdout
-    assert "Migrado" not in result.stdout
+    assert result.exit_code == 0, result.output
+    assert sorted(path.name for path in workdir.iterdir()) == ["lastro.toml"]
+    assert load_config(config).profiles["homolog"].tenant_id == "acme"
+
+
+def test_init_preserves_existing_project_id(runner: CliRunner, workdir: Path) -> None:
+    config = workdir / "lastro.toml"
+    config.write_text(LEGACY_CONFIG, encoding="utf-8")
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    migrated = config.read_bytes()
+    project_id = load_config(config).project_id
+
+    again = runner.invoke(app, FLAGS)
+    without_answers = runner.invoke(app, ["init"], input="")
+
+    assert again.exit_code == 1
+    assert "project_id existente preservado em lastro.toml" in again.stdout
+    assert "Migrado" not in again.stdout
+    assert without_answers.exit_code != 0
+    assert "Migrado" not in without_answers.stdout
     assert config.read_bytes() == migrated
+    assert load_config(config).project_id == project_id
 
 
 def test_init_keeps_windows_line_endings_when_migrating(runner: CliRunner, workdir: Path) -> None:
     config = workdir / "lastro.toml"
     config.write_bytes(LEGACY_CONFIG.replace("\n", "\r\n").encode("utf-8"))
 
-    runner.invoke(app, FLAGS)
+    assert runner.invoke(app, ["init"]).exit_code == 0
 
     data = config.read_bytes()
     assert b"project_id = " in data
