@@ -7,6 +7,8 @@ from lastro.scaffold.files import (
     ENV_EXAMPLE_FILE,
     MISSIONS_MARKER,
     InitAnswers,
+    ProjectIdMigration,
+    add_project_id,
     credential_variable_names,
     write_scaffold,
 )
@@ -82,3 +84,34 @@ def test_missions_folder_created_empty(tmp_path: Path) -> None:
     assert missions.is_dir()
     assert [child.name for child in missions.iterdir()] == [".gitkeep"]
     assert (missions / ".gitkeep").read_text(encoding="utf-8") == ""
+
+
+def test_generated_toml_carries_canonical_project_id(tmp_path: Path) -> None:
+    answers = InitAnswers(
+        profile_name="homolog",
+        target_url="https://alvo.example.test",
+        login_url="https://alvo.example.test/login",
+        tenant_id="acme",
+        project_id="3f0c9a52-6b1e-4d8e-9a77-2a4f1c0d5e61",
+    )
+    write_scaffold(tmp_path, answers)
+
+    assert load_config(tmp_path / CONFIG_FILE).project_id == answers.project_id
+    assert InitAnswers("a", "https://a.test", "https://a.test", "t").project_id != (
+        InitAnswers("a", "https://a.test", "https://a.test", "t").project_id
+    )
+
+
+def test_add_project_id_is_idempotent(tmp_path: Path) -> None:
+    config = tmp_path / CONFIG_FILE
+    config.write_text(
+        "[profiles.homolog]\ntarget_url = 'https://a.test'\n", encoding="utf-8", newline="\n"
+    )
+
+    assert (
+        add_project_id(config, "3f0c9a52-6b1e-4d8e-9a77-2a4f1c0d5e61") is ProjectIdMigration.ADDED
+    )
+    text = config.read_text(encoding="utf-8")
+    assert add_project_id(config) is ProjectIdMigration.PRESERVED
+    assert config.read_text(encoding="utf-8") == text
+    assert text.index("project_id") < text.index("[profiles.homolog]")

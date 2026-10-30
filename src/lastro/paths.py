@@ -54,5 +54,9 @@ def profile_data_dir(private_data_root: Path, profile_name: str) -> Path:
     return private_data_root / PROFILES_DIRNAME / profile_name
 
 
+def project_data_dir(private_data_root: Path, project_id: str) -> Path:
+    return private_data_root / project_id
+
+
 def demo_state_dir(private_data_root: Path) -> Path:
     return private_data_root / DEMO_DIRNAME

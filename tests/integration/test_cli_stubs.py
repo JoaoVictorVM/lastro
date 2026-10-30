@@ -72,16 +72,16 @@ def test_require_project_runs_command_with_valid_config(
     assert executed == ["homolog"]
 
 
-ALL_COMMANDS = ["init", "doctor", "demo", *STUB_COMMANDS]
+ALL_COMMANDS = ["init", "doctor", "demo", "run", "tail", "history", "backup", *STUB_COMMANDS]
 # Typer forces colored help when GITHUB_ACTIONS is set, so CI output carries ANSI escapes.
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def test_help_lists_all_eleven_commands(runner: CliRunner) -> None:
+def test_help_lists_all_twelve_commands(runner: CliRunner) -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
-    assert len(ALL_COMMANDS) == 11
+    assert len(ALL_COMMANDS) == 12
     plain = ANSI_ESCAPE.sub("", result.stdout)
     listed = {line.strip("│| ").split(" ")[0] for line in plain.splitlines()}
     assert set(ALL_COMMANDS) <= listed

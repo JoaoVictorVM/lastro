@@ -1,10 +1,12 @@
 import os
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from lastro.config.loader import ProjectContext, load_project
 from lastro.doctor.checks import DoctorEnvironment
 from lastro.paths import is_inside_git_tree
 
@@ -109,3 +111,42 @@ def healthy_project(
     (workdir / PERMISSION_FILE).parent.mkdir()
     (workdir / PERMISSION_FILE).write_text("{}", encoding="utf-8")
     return workdir
+
+
+PROJECT_ID = "3f0c9a52-6b1e-4d8e-9a77-2a4f1c0d5e61"
+RUN_LIMITS = "run_limits = { max_actions = 40, max_minutes = 30 }"
+
+
+@pytest.fixture
+def history_context_for(
+    workdir: Path, write_config: Callable[..., Path], profile_toml: Callable[..., str]
+) -> Callable[[str], ProjectContext]:
+    """Projeto com project_id persistido, perfis homolog e local e private data root próprio."""
+    root = workdir.parent / "private-root"
+    config_path = write_config(
+        f'project_id = "{PROJECT_ID}"\n'
+        f"private_data_root = '{root.as_posix()}'\n"
+        + profile_toml("homolog", extra=RUN_LIMITS)
+        + profile_toml("local")
+    )
+
+    def context(profile: str) -> ProjectContext:
+        return load_project(config_path, profile, cwd=workdir)
+
+    return context
+
+
+@pytest.fixture
+def history_context(history_context_for: Callable[[str], ProjectContext]) -> ProjectContext:
+    return history_context_for("homolog")
+
+
+@pytest.fixture
+def clock_now() -> list[datetime]:
+    """Instante atual do relógio falso; altere o item 0 para avançar o tempo."""
+    return [datetime(2026, 10, 30, 17, 32, 5, tzinfo=UTC)]
+
+
+@pytest.fixture
+def fake_clock(clock_now: list[datetime]) -> Callable[[], datetime]:
+    return lambda: clock_now[0]

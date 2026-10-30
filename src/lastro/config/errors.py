@@ -35,6 +35,7 @@ _FIELD_EXPECTATIONS: tuple[tuple[str, str], ...] = (
     ("demo", "table"),
     ("timezone", "IANA timezone name (e.g. America/Sao_Paulo)"),
     ("private_data_root", "directory path (text)"),
+    ("project_id", "UUID in canonical lowercase form"),
 )
 
 _GENERIC_EXPECTATIONS: dict[str, str] = {

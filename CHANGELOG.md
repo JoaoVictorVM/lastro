@@ -20,6 +20,10 @@ list the intended scope and contain no shipped changes until their release date 
   code of conduct and this changelog.
 - Ignore policy, pre-commit hooks with gitleaks secret scanning, issue forms, pull request
   template and CI on Windows and Ubuntu with coverage reporting.
+- Run registry and event log in a per-project SQLite history with versioned migrations,
+  secret redaction, `lastro run start`, `lastro tail`, `lastro history list` and
+  `lastro backup`, plus a stable `project_id` in `lastro.toml` that `lastro init` adds to
+  existing projects.
 
 ## [1.0.0] - Planned
 

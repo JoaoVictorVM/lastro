@@ -11,7 +11,13 @@ from lastro.config.errors import ConfigError
 from lastro.config.loader import load_config
 from lastro.config.schema import PROFILE_NAME_MAX_LENGTH, is_http_url, is_valid_profile_name
 from lastro.paths import ensure_writable, is_inside_git_tree, resolve_private_data_root
-from lastro.scaffold.files import CONFIG_FILE, InitAnswers, write_scaffold
+from lastro.scaffold.files import (
+    CONFIG_FILE,
+    InitAnswers,
+    ProjectIdMigration,
+    add_project_id,
+    write_scaffold,
+)
 
 
 def validate_profile_name(value: str) -> str:
@@ -73,6 +79,43 @@ def _private_root_for(project_dir: Path) -> Path:
     return resolve_private_data_root(override, project_dir)
 
 
+def _migrate_legacy_config(project_dir: Path) -> bool:
+    """Acrescenta project_id a um lastro.toml válido que ainda não o tem.
+
+    Retorna True quando a migração aconteceu; nesse caso nada mais do init é necessário.
+    """
+    config_path = project_dir / CONFIG_FILE
+    if not config_path.is_file():
+        return False
+    try:
+        config = load_config(config_path)
+    except ConfigError:
+        return False
+    if config.project_id is not None:
+        return False
+    try:
+        migration = add_project_id(config_path)
+    except (OSError, ValueError) as exc:
+        output.error(f"Não foi possível adicionar project_id em {CONFIG_FILE.as_posix()}: {exc}")
+        raise typer.Exit(code=1) from None
+    if migration is ProjectIdMigration.PRESERVED:
+        return False
+    output.info(
+        f"Migrado: {CONFIG_FILE.as_posix()} (project_id adicionado; demais valores preservados)"
+    )
+    return True
+
+
+def _report_project_id(project_dir: Path) -> None:
+    try:
+        config = load_config(project_dir / CONFIG_FILE)
+    except ConfigError:
+        output.error(f"{CONFIG_FILE.as_posix()} inválido: project_id não foi adicionado.")
+        return
+    if config.project_id is not None:
+        output.info(f"project_id existente preservado em {CONFIG_FILE.as_posix()}")
+
+
 def init(
     name: Annotated[
         str | None,
@@ -105,20 +148,28 @@ def init(
         ),
     ] = None,
 ) -> None:
-    """Cria lastro.toml, .env.example, a permissão do executor, missions/ e o private data root."""
+    """Cria lastro.toml, .env.example, a permissão do executor, missions/ e o private data root.
+
+    Em um projeto existente sem project_id, apenas acrescenta o campo ao lastro.toml, sem
+    perguntas e sem mudar os demais valores.
+    """
+    project_dir = Path.cwd()
+    if _migrate_legacy_config(project_dir):
+        return
     answers = InitAnswers(
         profile_name=_ask(0, name),
         target_url=_ask(1, target_url),
         login_url=_ask(2, login_url),
         tenant_id=_ask(3, tenant),
     )
-    project_dir = Path.cwd()
     result = write_scaffold(project_dir, answers)
 
     for relative in result.created:
         output.info(f"Criado: {relative.as_posix()}")
     for relative in result.preserved:
         output.info(f"Preservado (já existia): {relative.as_posix()}")
+    if CONFIG_FILE in result.preserved:
+        _report_project_id(project_dir)
 
     root = _private_root_for(project_dir)
     try:
