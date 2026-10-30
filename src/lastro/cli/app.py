@@ -8,6 +8,7 @@ import typer
 
 from lastro import get_version
 from lastro.cli import (
+    auth_cmd,
     backup_cmd,
     demo_cmd,
     doctor_cmd,
@@ -70,6 +71,7 @@ app.add_typer(run_cmd.run_app, name="run")
 app.command(name="tail")(tail_cmd.tail)
 app.add_typer(history_cmd.history_app, name="history")
 app.command(name="backup")(backup_cmd.backup)
+app.add_typer(auth_cmd.auth_app, name="auth")
 stubs.register(app)
 
 
