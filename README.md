@@ -46,10 +46,11 @@ graph TD
     classDef implemented fill:#d7f0e3,stroke:#0b634a,color:#0b2a20
     classDef planned fill:#f2f2f2,stroke:#8a8a8a,color:#555555,stroke-dasharray: 5 5
 
-    Tester[Tester] --> CLI[lastro CLI: init, doctor, demo]
+    Tester[Tester] --> CLI[lastro CLI: init, doctor, demo, run, tail, history, backup]
     CLI --> Config[lastro.toml profiles and .env references]
     CLI --> Demo[Bundled demo app with seeded defects]
     CLI --> Root[Private data root outside the repository]
+    CLI --> Registry
     Tester --> Executor[Agent executor: Claude Code, Codex, native]
     Executor --> Tools[Policy-enforced browser tool server]
     Tools --> Target[System under test]
@@ -58,8 +59,8 @@ graph TD
     Gates[Human approval gates] --> Tools
     Eval[Evaluation harness] --> Demo
 
-    class CLI,Config,Demo,Root implemented
-    class Executor,Tools,Target,Registry,Report,Gates,Eval planned
+    class CLI,Config,Demo,Root,Registry implemented
+    class Executor,Tools,Target,Report,Gates,Eval planned
 ```
 
 Solid green nodes are implemented today. Dashed grey nodes are planned.
@@ -81,6 +82,24 @@ No evaluation has been run yet, so this table intentionally shows no numbers. Ev
 | Claude Code | Setup only today: `lastro init` writes its permission configuration and `lastro doctor` checks that the `claude` CLI is installed. Agent runs are planned. |
 | Codex | Planned |
 | Native LangGraph executor | Planned |
+
+## Run history and backup
+
+Every run is recorded in a SQLite database at `<private data root>/<project_id>/history.sqlite`, next to one folder per run under `runs/`. The `project_id` lives in `lastro.toml` and is shared by all profiles of the project. Projects created before it existed are migrated by running `lastro init` again, which adds only that field and keeps every other value.
+
+- `lastro --profile <name> run start --mission "..."` (or `--mission-file missions/<file>.md`) records the run before anything touches the target system and prints the run id and folder.
+- `lastro tail [run id]` follows the events of the active run, or of the given run.
+- `lastro history list` lists past runs, with `--flow`, `--status`, `--issue`, `--profile`, `--since` (for example `7d`) and `--limit` (default 20).
+- `lastro backup <dest>` writes one zip archive with `manifest.json` and a `<project_id>/` folder holding `history.sqlite` and `runs/`. The database copy comes from SQLite's online backup API, so the archive has no `-wal` or `-shm` files. The archive is published only after it is complete, and an existing file is never overwritten. When `<dest>` is an existing folder, the archive gets a generated name.
+
+### Restoring a backup
+
+There is no restore command and a restore never merges with existing history. To restore by hand:
+
+1. Create an empty folder and extract the whole archive into it, keeping the relative paths.
+2. Before opening anything, check every file against the manifest. From the repository checkout, `uv run python -c "from pathlib import Path; from lastro.history import verify_restored_backup; print(verify_restored_backup(Path('<folder>')) or 'ok')"` prints `ok` or the files that do not match.
+3. Point `private_data_root` in a `lastro.toml` with the same `project_id` to that folder and run `lastro history list`. The output matches the history at backup time.
+4. To make the restored copy the project history, stop Lastro, move the current `<private data root>/<project_id>` folder aside and move the restored `<project_id>` folder into its place.
 
 ## Roadmap
 

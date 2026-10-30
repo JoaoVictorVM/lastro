@@ -5,10 +5,7 @@ import typer
 from lastro.cli import output
 
 STUB_COMMANDS: dict[str, str] = {
-    "run": "Executa uma missão contra o perfil selecionado.",
-    "tail": "Acompanha os eventos da run atual.",
     "approve": "Aprova ou recusa ações pendentes de uma run.",
-    "history": "Consulta o histórico de runs.",
     "report": "Gera e verifica relatórios de runs.",
     "data": "Gerencia os dados privados do projeto.",
     "knowledge": "Gerencia a base de conhecimento do sistema alvo.",
