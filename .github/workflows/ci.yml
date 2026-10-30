@@ -46,6 +46,15 @@ jobs:
       - name: Install locked environment
         run: uv sync --locked
 
+      # The authentication tests drive a real Chromium; Linux also needs its system libraries.
+      - name: Install Playwright Chromium
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            uv run playwright install --with-deps chromium
+          else
+            uv run playwright install chromium
+          fi
+
       - name: Lint (ruff)
         run: uv run ruff check .
 
