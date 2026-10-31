@@ -51,7 +51,11 @@ _SUBTYPE_BY_STATUS = {
 
 @dataclass(frozen=True)
 class SessionOutcome:
-    """Resultado de início ou refresh; `ref` só existe com estado publicado e reutilizável."""
+    """Resultado de início ou refresh.
+
+    `ref` aponta o estado publicado, que permite leitura em qualquer status. Escrita depende
+    apenas de `result`, nunca da existência de `ref`.
+    """
 
     ref: AuthenticatedSessionRef | None
     result: TenantVerificationResult
@@ -217,17 +221,14 @@ class AuthSessionManager:
                 raise
             self._record(AuthEventSubtype.LOGIN_SUCCEEDED, trigger)
             result = await self._verifier.verify(context, page)
-            state: StorageState | None = (
-                await context.storage_state() if result.is_verified else None
-            )
+            state = await context.storage_state()
         finally:
             await context.close()
-        if state is None:
-            self._record_result(result, trigger)
-            self._apply(result)
-            return SessionOutcome(ref=None, result=result, refreshed=refreshed)
+        # Mismatch ou unverifiable também publicam o estado: a run segue somente leitura. O
+        # arquivo não guarda marca de verificação, então todo reuso verifica o tenant de novo
+        # e só um match libera escrita.
         ref = self._store.publish(self.profile.name, cast(dict[str, Any], state))
-        if refreshed:
+        if refreshed and result.is_verified:
             self._record(AuthEventSubtype.SESSION_REFRESHED, trigger, **self._result_fields(result))
         else:
             self._record_result(result, trigger)

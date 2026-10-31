@@ -255,17 +255,75 @@ def test_corrupt_state_is_removed_without_disclosure(
     assert "conteudo-sentinela-corrompido" not in path.read_text(encoding="utf-8")
 
 
-def test_fresh_login_with_mismatch_is_not_published(make_harness: Callable[..., Harness]) -> None:
-    harness = make_harness(MISMATCH)
+@pytest.mark.parametrize(
+    ("status", "subtype", "state"),
+    [
+        (MISMATCH, "tenant_mismatch", SessionState.MISMATCH),
+        (UNVERIFIABLE, "tenant_unverifiable", SessionState.UNVERIFIABLE),
+    ],
+)
+def test_fresh_login_without_match_publishes_read_only_session(
+    make_harness: Callable[..., Harness],
+    status: tuple[VerificationStatus, str],
+    subtype: str,
+    state: SessionState,
+) -> None:
+    harness = make_harness(status)
 
     outcome = run(harness.manager.start(browser(harness)))
 
-    assert outcome.ref is None
-    assert outcome.result.status is VerificationStatus.MISMATCH
-    assert harness.manager.state is SessionState.MISMATCH
+    assert outcome.ref is not None
+    assert harness.manager.session_ref == outcome.ref
+    assert outcome.result.status is status[0]
+    assert not outcome.result.allows_writes
+    assert outcome.result.verified_context() is None
+    assert harness.manager.state is state
     assert harness.manager.verified_context is None
-    assert not harness.store.path_for("homolog").exists()
-    assert harness.subtypes == ["login_succeeded", "tenant_mismatch"]
+    assert harness.store.load("homolog") is not None
+    assert harness.subtypes == ["login_succeeded", subtype]
+
+    run(harness.manager.open_context(browser(harness)))
+    assert harness.browser.contexts[-1].storage_seed == STATE
+
+
+@pytest.mark.parametrize("status", [MISMATCH, UNVERIFIABLE])
+def test_session_without_match_is_reverified_on_reuse(
+    make_harness: Callable[..., Harness], status: tuple[VerificationStatus, str]
+) -> None:
+    first = make_harness(status)
+    run(first.manager.start(browser(first)))
+
+    still_wrong = make_harness(status)
+    again = run(still_wrong.manager.start(browser(still_wrong)))
+
+    assert again.reused
+    assert still_wrong.login.calls == 0
+    assert len(still_wrong.verifier.calls) == 1
+    assert not again.result.allows_writes
+    assert still_wrong.manager.verified_context is None
+    assert still_wrong.subtypes == [first.subtypes[-1]]
+
+    fixed = make_harness(VERIFIED)
+    reverified = run(fixed.manager.start(browser(fixed)))
+
+    assert reverified.reused
+    assert len(fixed.verifier.calls) == 1
+    assert reverified.result.allows_writes
+    assert fixed.subtypes == ["session_reused"]
+
+
+def test_refresh_without_match_keeps_session_but_not_refreshed_event(
+    make_harness: Callable[..., Harness],
+) -> None:
+    harness = make_harness(VERIFIED, MISMATCH)
+    run(harness.manager.start(browser(harness)))
+
+    outcome = run(harness.manager.handle_unauthorized(browser(harness)))
+
+    assert outcome.ref is not None
+    assert outcome.result.status is VerificationStatus.MISMATCH
+    assert harness.manager.verified_context is None
+    assert harness.subtypes[-2:] == ["login_succeeded", "tenant_mismatch"]
 
 
 def test_unverifiable_records_reason(make_harness: Callable[..., Harness]) -> None:

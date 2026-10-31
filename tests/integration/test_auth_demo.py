@@ -227,3 +227,57 @@ def test_wrong_password_fails_login_with_profile_message(
         "Check credentials and login selectors; no actions were executed."
     )
     assert not (project.project_dir / ".auth" / "demo.json").exists()
+
+
+@pytest.mark.parametrize("case", ["mismatch", "unverifiable"])
+def test_fresh_login_without_match_stays_read_only_and_is_reverified(
+    make_auth_project: Callable[..., Any],
+    profile_for: Callable[..., str],
+    demo_server: Any,
+    with_browser: Callable[..., Any],
+    case: str,
+) -> None:
+    if case == "mismatch":
+        block = profile_for(
+            "demo",
+            demo_server.url,
+            user_env="DEMO_BOREAL_USER",
+            password_env="DEMO_BOREAL_PASSWORD",
+        )
+        expected = VerificationStatus.MISMATCH
+    else:
+        block = profile_for("demo", demo_server.url, auth=BROKEN_ME.format(name="demo"))
+        expected = VerificationStatus.UNVERIFIABLE
+    project = make_auth_project(block)
+
+    async def scenario(browser: Browser) -> dict[str, Any]:
+        manager = AuthSessionManager(project.context())
+        first = await manager.start(browser)
+        context = await manager.open_context(browser)
+        read = await context.request.get(f"{demo_server.url}/employees", max_redirects=0)
+        write = await manager.before_write(context)
+        verified = manager.verified_context
+        await context.close()
+        later = AuthSessionManager(project.context())
+        reused = await later.start(browser)
+        return {
+            "first": first,
+            "read": read.status,
+            "write": write,
+            "verified": verified,
+            "reused": reused,
+            "later_verified": later.verified_context,
+        }
+
+    result = with_browser(scenario)
+
+    assert result["first"].ref is not None
+    assert result["first"].result.status is expected
+    assert (project.project_dir / ".auth" / "demo.json").exists()
+    assert result["read"] == 200
+    assert result["write"].status is expected
+    assert not result["write"].allows_writes
+    assert result["verified"] is None
+    assert result["reused"].reused
+    assert result["reused"].result.status is expected
+    assert result["later_verified"] is None

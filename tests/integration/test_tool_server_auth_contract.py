@@ -119,6 +119,23 @@ def test_missing_or_mismatched_context_denies_all_writes(history_context: Projec
     assert tool_server_decision(manager, "write") == "deny"
 
 
+@pytest.mark.parametrize("status", [VerificationStatus.MISMATCH, VerificationStatus.UNVERIFIABLE])
+def test_fresh_session_without_match_allows_reads_only(
+    history_context: ProjectContext, status: VerificationStatus
+) -> None:
+    manager, verifier = make_manager(history_context)
+    verifier.status = status
+    browser = cast(Browser, OfflineBrowser())
+
+    outcome = asyncio.run(manager.start(browser))
+
+    assert outcome.ref is not None
+    assert manager.session_ref is not None
+    asyncio.run(manager.open_context(browser))
+    assert tool_server_decision(manager, "read") == "allow"
+    assert tool_server_decision(manager, "write") == "deny"
+
+
 def test_contracts_carry_no_session_material() -> None:
     result_fields = {item.name for item in fields(TenantVerificationResult)}
     context_fields = {item.name for item in fields(VerifiedTenantContext)}

@@ -123,7 +123,10 @@ def test_login_failure_and_mismatch_exit_with_messages(
         "Active tenant 'boreal' does not match authorized tenant 'aurora'. "
         "Write actions are blocked for this run.\n"
     )
-    assert not (project.project_dir / ".auth" / "trocado.json").exists()
+    assert (project.project_dir / ".auth" / "trocado.json").exists()
+    reused = invoke(runner, project, "auth", "check", "--profile", "trocado")
+    assert reused.exit_code == 2
+    assert reused.stderr == mismatch.stderr
 
     monkeypatch.setenv("DEMO_AURORA_PASSWORD", "senha-errada-sentinela-cli")
     failed = invoke(runner, project, "auth", "check", "--profile", "demo")
