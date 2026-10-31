@@ -46,3 +46,24 @@ password_env = ${password_env}
 # Campos editáveis por entidade. Cada entidade precisa estar em allowed_entities.
 [profiles.${profile_name}.editable_fields]
 # employee = ["phone", "email"]
+
+# Login scriptado: seletores do formulário de login e da escolha de tenant. Os padrões
+# funcionam com o demo; ajuste para o sistema alvo. Nenhum valor de credencial fica aqui.
+[profiles.${profile_name}.auth]
+username_selector = '[name="username"]'
+password_selector = '[name="password"]'
+submit_selector = 'button[type="submit"]'
+# Seleção de tenant exibida depois do login (usuários com mais de um tenant).
+tenant_selector = '[name="tenant"]'
+tenant_submit_selector = 'button[type="submit"]'
+# Prazo do login em segundos (1 a 60).
+timeout_seconds = 15
+
+# Verificação do tenant ativo, na ordem de preferência: api, cookie, jwt, page.
+# Perfis com allowed_entities precisam de ao menos um método.
+[[profiles.${profile_name}.auth.verification]]
+type = "api"
+endpoint = "/api/me"
+tenant_json_path = "tenant.id"
+# Caminho opcional da identidade do usuário na mesma resposta.
+# user_json_path = "user.email"

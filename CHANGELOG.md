@@ -24,6 +24,9 @@ list the intended scope and contain no shipped changes until their release date 
   secret redaction, `lastro run start`, `lastro tail`, `lastro history list` and
   `lastro backup`, plus a stable `project_id` in `lastro.toml` that `lastro init` adds to
   existing projects.
+- Scripted Playwright login per profile with credentials read only from the environment,
+  private storage state reused for up to 8 hours, fail-closed tenant verification by API,
+  cookie, signed JWT or page element, and `lastro auth check`.
 
 ## [1.0.0] - Planned
 

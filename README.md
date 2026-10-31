@@ -83,6 +83,14 @@ No evaluation has been run yet, so this table intentionally shows no numbers. Ev
 | Codex | Planned |
 | Native LangGraph executor | Planned |
 
+## Scripted login and tenant check
+
+Each profile logs in through a deterministic Playwright script. The username and password are read only from the environment variables named in `[profiles.<name>.credentials]`, so they never reach the model, the history or any output. The `[profiles.<name>.auth]` block holds the login selectors, an optional tenant selection step and the ordered tenant verification methods (`api`, `cookie`, `jwt`, `page`). The defaults work with the demo. A profile with `allowed_entities` needs at least one verification method.
+
+The browser session is saved as Playwright storage state at `<private data root>/<project_id>/.auth/<profile>.json`, readable only by the current user, and reused for at most 8 hours. Run `playwright install chromium` once before the first login.
+
+- `lastro auth check --profile <name>` logs in, verifies the active tenant and prints `Logged in as <user> · tenant verified: <tenant name> (<method>)`. When no verification method exposes the user, it prints `Logged in for profile <name> · tenant verified: <tenant name> (<method>)`. It never starts a run or writes to the history. A missing credential variable, a failed login, a tenant mismatch or a tenant that cannot be verified exits with code 2.
+
 ## Run history and backup
 
 Every run is recorded in a SQLite database at `<private data root>/<project_id>/history.sqlite`, next to one folder per run under `runs/`. The `project_id` lives in `lastro.toml` and is shared by all profiles of the project. Projects created before it existed are migrated by running `lastro init` in the project folder: with a valid `lastro.toml` that has no `project_id`, it asks no questions, adds only that field, keeps every other value and exits successfully. Running it again later never changes an existing `project_id`.
