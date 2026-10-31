@@ -18,6 +18,8 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
+from lastro.config.policy import BrowserPolicy
+
 DEFAULT_TIMEZONE = "America/Sao_Paulo"
 DEFAULT_EXECUTOR = "claude-code"
 DEFAULT_DEMO_PORT = 8765
@@ -285,6 +287,7 @@ class Profile(BaseModel):
         default_factory=dict[str, object]
     )
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    policy: BrowserPolicy = Field(default_factory=BrowserPolicy)
 
     @field_validator("editable_fields")
     @classmethod

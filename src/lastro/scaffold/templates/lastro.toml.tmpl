@@ -67,3 +67,11 @@ endpoint = "/api/me"
 tenant_json_path = "tenant.id"
 # Caminho opcional da identidade do usuário na mesma resposta.
 # user_json_path = "user.email"
+
+# Sem bindings, a exploração permite somente leitura.
+[profiles.${profile_name}.policy]
+version = 1
+auxiliary_origins = []
+bindings = []
+rules = []
+preauthorized_records = []

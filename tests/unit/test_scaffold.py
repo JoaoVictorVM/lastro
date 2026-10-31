@@ -47,7 +47,13 @@ def test_credential_names_are_valid_for_any_profile_name() -> None:
 def test_no_secret_values_written(tmp_path: Path) -> None:
     result = write_scaffold(tmp_path, ANSWERS)
 
-    assert set(result.created) == {CONFIG_FILE, ENV_EXAMPLE_FILE, PERMISSION_FILE, MISSIONS_MARKER}
+    assert set(result.created) == {
+        CONFIG_FILE,
+        ENV_EXAMPLE_FILE,
+        PERMISSION_FILE,
+        MISSIONS_MARKER,
+        Path(".mcp.json"),
+    }
     assert not (tmp_path / ".env").exists()
     env_example = (tmp_path / ENV_EXAMPLE_FILE).read_text(encoding="utf-8")
     assignments = [line for line in env_example.splitlines() if line and not line.startswith("#")]
@@ -63,7 +69,7 @@ def test_permission_file_is_restrictive(tmp_path: Path) -> None:
     write_scaffold(tmp_path, ANSWERS)
 
     settings = json.loads((tmp_path / PERMISSION_FILE).read_text(encoding="utf-8"))
-    assert settings["permissions"]["allow"] == []
+    assert settings["permissions"]["allow"] == ["mcp__lastro__*"]
     assert "Bash" in settings["permissions"]["deny"]
 
 

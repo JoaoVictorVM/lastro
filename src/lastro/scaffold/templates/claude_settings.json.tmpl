@@ -1,7 +1,9 @@
 {
   "permissions": {
     "defaultMode": "default",
-    "allow": [],
+    "allow": [
+      "mcp__lastro__*"
+    ],
     "deny": [
       "Bash",
       "Edit",
@@ -10,7 +12,20 @@
       "WebFetch",
       "WebSearch",
       "Read(./.env)",
-      "Read(./.env.*)"
+      "Read(./.env.*)",
+      "PowerShell",
+      "Agent",
+      "Read",
+      "Grep",
+      "Glob",
+      "mcp__playwright__*",
+      "mcp__puppeteer__*",
+      "mcp__chrome__*"
     ]
-  }
+  },
+  "allowedMcpServers": [
+    {
+      "serverName": "lastro"
+    }
+  ]
 }
