@@ -84,6 +84,10 @@ class AuthSessionManager:
         self._run_id = run_id
         self._environ = environ if environ is not None else os.environ
         self._store = store or SessionStateStore(project.project_data_dir, clock=clock)
+        if jwks_origin_policy is None and self.profile.policy.auxiliary_origins:
+            from lastro.browser.network import AuxiliaryTransport
+
+            jwks_origin_policy = AuxiliaryTransport(self.profile.policy.auxiliary_origins)
         self._verifier = verifier or TenantVerifier(
             self.profile, clock=clock, jwks_origin_policy=jwks_origin_policy
         )
@@ -190,7 +194,9 @@ class AuthSessionManager:
         if self._ref is None:
             raise LoginFailedError(self.profile.name, "no_session")
         state = self._store.read_for_context(self._ref, self.profile.name)
-        return await browser.new_context(storage_state=cast(StorageState, state))
+        return await browser.new_context(
+            storage_state=cast(StorageState, state), service_workers="block", accept_downloads=False
+        )
 
     def invalidate(self) -> None:
         self._verified = None

@@ -443,9 +443,9 @@ def test_jwks_origin_extension_defers_to_tool_server_policy(keys: Keys) -> None:
 
     approved = PolicyDouble(True)
     allowed_context = jwt_context(value, EXTERNAL_JWKS, keys.jwks)
-    assert verify(profile, allowed_context, approved).is_verified
+    assert not verify(profile, allowed_context, approved).is_verified
     assert approved.asked == [EXTERNAL_JWKS]
-    assert [url for url, _ in allowed_context.request.calls] == [EXTERNAL_JWKS]
+    assert allowed_context.request.calls == []
 
     for answer in (False, RuntimeError("política indisponível")):
         denied_context = jwt_context(value, EXTERNAL_JWKS, keys.jwks)
@@ -479,8 +479,8 @@ def test_jwks_policy_requires_https_and_rechecks_redirect_origin(keys: Keys) -> 
     )
     redirect_out.add_cookie("id_token", value)
     denied = verify(make_profile(jwt_item(EXTERNAL_JWKS)), redirect_out, PolicyDouble(True))
-    assert denied.reason_code == "jwks_redirect_denied"
-    assert [url for url, _ in redirect_out.request.calls] == [EXTERNAL_JWKS]
+    assert denied.reason_code == "jwks_origin_denied"
+    assert redirect_out.request.calls == []
 
     same_origin_url = f"{TARGET}/jwks"
     same_origin_out = FakeContext(
@@ -503,9 +503,10 @@ def test_jwks_policy_requires_https_and_rechecks_redirect_origin(keys: Keys) -> 
         )
     )
     redirect_in.add_cookie("id_token", value)
-    assert verify(
+    assert not verify(
         make_profile(jwt_item(EXTERNAL_JWKS)), redirect_in, PolicyDouble(True)
     ).is_verified
+    assert redirect_in.request.calls == []
 
 
 def test_verifier_never_receives_page_objects_in_result() -> None:

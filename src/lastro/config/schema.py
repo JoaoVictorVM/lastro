@@ -18,6 +18,8 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
+from lastro.config.policy import BrowserPolicy, safe_path
+
 DEFAULT_TIMEZONE = "America/Sao_Paulo"
 DEFAULT_EXECUTOR = "claude-code"
 DEFAULT_DEMO_PORT = 8765
@@ -285,6 +287,17 @@ class Profile(BaseModel):
         default_factory=dict[str, object]
     )
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    policy: BrowserPolicy = Field(default_factory=BrowserPolicy)
+
+    @field_validator("denied_endpoint_patterns")
+    @classmethod
+    def _endpoint_patterns(cls, values: list[str]) -> list[str]:
+        for value in values:
+            prefix = value.removesuffix("/**").removesuffix("/*")
+            safe_path(prefix or "/")
+            if "*" in prefix or "{" in prefix or "}" in prefix:
+                raise ValueError("endpoint pattern must be literal or end in /* or /**")
+        return values
 
     @field_validator("editable_fields")
     @classmethod

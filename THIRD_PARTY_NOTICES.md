@@ -64,3 +64,18 @@ chromium` and is not distributed with Lastro.
 
 Development tools (ruff, pyright, pytest, pytest-cov, pre-commit, gitleaks and the
 pre-commit hooks) are used only to build and check Lastro and are not distributed with it.
+
+## Browser protocol dependencies
+
+| Project | Author or organization | URL | Version | License | Modifications | Required notices |
+|---|---|---|---|---|---|---|
+| mcp | Anthropic, PBC. | https://github.com/modelcontextprotocol/python-sdk | 1.30.0 | MIT | None | License text shipped with the package |
+| attrs | Hynek Schlawack <hs@ox.cx> | https://github.com/python-attrs/attrs | 26.1.0 | MIT | None | License text shipped with the package |
+| httpx-sse | Florimond Manca <florimond.manca@protonmail.com> | https://github.com/florimondmanca/httpx-sse | 0.4.3 | MIT | None | License text shipped with the package |
+| jsonschema | Julian Berman <Julian+jsonschema@GrayVines.com> | https://github.com/python-jsonschema/jsonschema | 4.26.0 | MIT | None | License text shipped with the package |
+| jsonschema-specifications | Julian Berman <Julian+jsonschema-specifications@GrayVines.com> | https://github.com/python-jsonschema/jsonschema-specifications | 2025.9.1 | MIT | None | License text shipped with the package |
+| pydantic-settings | Samuel Colvin <s@muelcolvin.com>, Eric Jolibois <em.jolibois@gmail.com>, Hasan Ramezani <hasan.r67@gmail.com> | https://github.com/pydantic/pydantic-settings | 2.16.2 | MIT | None | License text shipped with the package |
+| pywin32 | Mark Hammond (et al) | https://github.com/mhammond/pywin32 | 312 | PSF | None | License text shipped with the package |
+| referencing | Julian Berman <Julian+referencing@GrayVines.com> | https://github.com/python-jsonschema/referencing | 0.37.0 | MIT | None | License text shipped with the package |
+| rpds-py | Julian Berman <Julian+rpds@GrayVines.com> | https://github.com/sponsors/Julian | 2026.9.1 | MIT | None | License text shipped with the package |
+| sse-starlette | sysid <sysid@gmx.de> | https://github.com/sysid/sse-starlette | 3.6.0 | BSD-3-Clause | None | License text shipped with the package |

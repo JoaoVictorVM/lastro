@@ -283,6 +283,16 @@ class TenantVerifier:
     async def _fetch_jwks(
         self, context: BrowserContext, url: str
     ) -> Mapping[str, object] | _Observation:
+        if not is_same_origin(url, self.profile.target_url):
+            from lastro.browser.network import AuxiliaryTransport
+
+            transport = self._jwks_origin_policy
+            if not isinstance(transport, AuxiliaryTransport):
+                return _failure("jwks_origin_denied", "external JWKS needs pinned transport")
+            try:
+                return await transport.fetch_jwks(url)
+            except Exception:
+                return _failure("jwks_unavailable", "external JWKS transport failed")
         approved = origin_of(url)
         current = url
         for _ in range(MAX_JWKS_REDIRECTS + 1):

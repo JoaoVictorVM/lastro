@@ -79,6 +79,18 @@ def render_files(answers: InitAnswers, executor: str = DEFAULT_EXECUTOR) -> dict
         ENV_EXAMPLE_FILE: _template("env.example.tmpl").substitute(env_values),
         spec.permission_file: _template(spec.permission_template).template,
         MISSIONS_MARKER: "",
+        Path(".mcp.json"): json.dumps(
+            {
+                "mcpServers": {
+                    "lastro": {
+                        "command": "lastro-browser",
+                        "args": ["--profile", answers.profile_name],
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
     }
 
 

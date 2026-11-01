@@ -80,3 +80,23 @@ def start(
     output.info(f"Run: {created.record.id}")
     output.info(f"Pasta: {created.paths.run_dir}")
     handoff(created)
+
+
+@run_app.command("reverify-tenant")
+def reverify_tenant(ctx: typer.Context) -> None:
+    """Solicita ao browser dono da run uma nova verificação de tenant."""
+    from lastro.browser.control import request_reverification
+
+    state = get_state(ctx)
+    project = state.require_history_project()
+    history = state.open_history(project)
+    run = history.get_active_run()
+    if run is None:
+        output.error("No active run. Start one with 'lastro run start'.")
+        raise typer.Exit(code=USAGE_EXIT_CODE)
+    try:
+        result = request_reverification(project.project_data_dir, run.id)
+    except (OSError, ValueError):
+        output.error("Browser owner unavailable; no new browser was started.")
+        raise typer.Exit(code=USAGE_EXIT_CODE) from None
+    output.info(result)
