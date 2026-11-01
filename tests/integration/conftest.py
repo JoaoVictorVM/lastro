@@ -64,9 +64,14 @@ def _with_test_routes(app: FastAPI) -> FastAPI:
 
 
 @pytest.fixture
-def demo_server(tmp_path: Path, chromium: None) -> Iterator[DemoServer]:
+def demo_flags() -> FlagState:
+    return FlagState.only()
+
+
+@pytest.fixture
+def demo_server(tmp_path: Path, chromium: None, demo_flags: FlagState) -> Iterator[DemoServer]:
     state_dir = tmp_path / "demo-state"
-    app = _with_test_routes(create_app(DemoConfig(state_dir=state_dir), FlagState.only()))
+    app = _with_test_routes(create_app(DemoConfig(state_dir=state_dir), demo_flags))
     access_log: list[tuple[str, str]] = []
 
     @app.middleware("http")

@@ -1,6 +1,7 @@
 """Contexto da run com interceptação instalada antes de criar páginas."""
 
 import asyncio
+import contextlib
 import os
 import time
 from collections.abc import Callable
@@ -10,10 +11,12 @@ from urllib.parse import urlsplit
 from playwright.async_api import (
     Browser,
     BrowserContext,
+    ConsoleMessage,
     Page,
     Request,
     Response,
     Route,
+    WebError,
     async_playwright,
 )
 
@@ -26,6 +29,7 @@ from lastro.config.loader import ProjectContext
 from lastro.config.policy import safe_path
 from lastro.config.schema import is_same_origin
 from lastro.history import EventType, HistoryStore, RunStatus
+from lastro.oracles.collector import OracleCollector
 
 
 class BrowserSession:
@@ -53,11 +57,37 @@ class BrowserSession:
         self.request_actions: dict[Request, ExpectedRequest] = {}
         self.provenance = Provenance(history, run_id, project.profile)
         self.lock = asyncio.Lock()
+        self.action_sequence = 0
+        self.closing_context = False
+        self.aborted: dict[Request, str] = {}
+        self.blocked_console: dict[tuple[Page | None, str], tuple[int, float]] = {}
+        self.auth_console: dict[tuple[Page | None, str], tuple[int, float]] = {}
+        self.response_tasks: set[asyncio.Task[None]] = set()
         self.secrets: set[str] = {
             value
             for key in project.profile.credential_variable_names()
             if (value := os.environ.get(key))
         }
+        self.oracles = OracleCollector(
+            history, run_id, project.profile.oracles.ignore, self.sanitize, self.oracle_failure
+        )
+
+    def oracle_failure(self, error: Exception) -> None:
+        self.policy.locks.add("history")
+        with contextlib.suppress(Exception):
+            self.history.append_event(
+                self.run_id,
+                EventType.POLICY_DECISION,
+                policy_decision="deny",
+                payload={
+                    "reason": "oracle_collection_failed",
+                    "diagnostic": self.sanitize(str(error)),
+                },
+            )
+            self.history.finish_run(self.run_id, RunStatus.BLOCKED, "oracle_collection_failed")
+
+    def mark_action(self, page: Page, action_id: str) -> None:
+        self.oracles.mark_action(page, action_id, self.action_sequence)
 
     def sanitize(self, text: str) -> str:
         for secret in sorted(self.secrets, key=len, reverse=True):
@@ -73,7 +103,7 @@ class BrowserSession:
             self.expected = None
             outcome = await self.auth.handle_unauthorized(self.browser)
             if self.context is not None:
-                await self.context.close()
+                await self.close_context()
             await self.open_context()
             self.needs_refresh = False
             if not outcome.result.is_verified:
@@ -93,6 +123,8 @@ class BrowserSession:
 
     async def open_context(self) -> None:
         assert self.browser is not None
+        self.closing_context = False
+        self.oracles.reset()
         self.context = await self.auth.open_context(self.browser)
         self.secrets.update(
             cookie.get("value", "")
@@ -102,6 +134,10 @@ class BrowserSession:
         await self.context.route("**/*", self.route)
         await self.context.route_web_socket("**/*", lambda ws: ws.close())
         self.context.on("response", self.response)
+        self.context.on("console", self.console)
+        self.context.on("weberror", self.web_error)
+        self.context.on("requestfailed", self.request_failed)
+        self.context.on("requestfinished", self.request_finished)
         self.context.on("page", self.new_page)
         self.page = await self.context.new_page()
         if self.auth.verified_context is None:
@@ -110,20 +146,94 @@ class BrowserSession:
     def new_page(self, page: Page) -> None:
         page.on("crash", self.on_crash)
         page.on("download", lambda download: download.cancel())
-        page.on("console", lambda message: self.record_signal("console", message.text))
-        page.on("pageerror", lambda error: self.record_signal("pageerror", str(error)))
+        page.on("popup", lambda popup: self.oracles.inherit(popup, page))
+        page.on("close", self.forget_page)
 
-    def record_signal(self, kind: str, text: str) -> None:
+    def forget_page(self, page: Page) -> None:
+        self.oracles.actions.pop(page, None)
+
+    def console(self, message: ConsoleMessage) -> None:
         try:
-            self.active()
-            self.history.append_event(
-                self.run_id,
-                EventType.POLICY_DECISION,
-                policy_decision="allow",
-                payload={"source": kind, "text": self.sanitize(text[:8000])},
+            location = message.location.get("url") or ""
+            key = (message.page, location)
+            auth_response = self.auth_console.get(key)
+            if (
+                auth_response is not None
+                and time.monotonic() - auth_response[1] <= 5
+                and message.text.startswith(
+                    "Failed to load resource: the server responded with a status of "
+                    + str(auth_response[0])
+                    + " "
+                )
+            ):
+                self.auth_console.pop(key, None)
+                return
+            blocked = self.blocked_console.get(key)
+            if (
+                blocked is not None
+                and time.monotonic() - blocked[1] <= 5
+                and message.text
+                in {
+                    "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT",
+                    "Failed to load resource: net::ERR_BLOCKED_BY_CLIENT.Inspector",
+                }
+            ):
+                if blocked[0] <= 1:
+                    self.blocked_console.pop(key, None)
+                else:
+                    self.blocked_console[key] = (blocked[0] - 1, blocked[1])
+                return
+            self.oracles.capture(
+                "console",
+                page=message.page,
+                url=location or (message.page.url if message.page else None),
+                text=message.text,
+                level=message.type,
             )
+        except Exception as error:
+            self.oracles.fail(error)
+
+    def web_error(self, error: WebError) -> None:
+        self.oracles.capture(
+            "pageerror",
+            page=error.page,
+            url=error.page.url if error.page else None,
+            text=str(error.error),
+        )
+
+    @staticmethod
+    def request_page(request: Request) -> Page | None:
+        try:
+            return request.frame.page
         except Exception:
-            self.policy.locks.add("history")
+            return None
+
+    def mark_abort(self, request: Request, reason: str) -> None:
+        self.aborted[request] = reason
+        now = time.monotonic()
+        self.blocked_console = {
+            key: value for key, value in self.blocked_console.items() if now - value[1] <= 5
+        }
+        key = (self.request_page(request), request.url)
+        count = self.blocked_console.get(key, (0, now))[0]
+        self.blocked_console[key] = (count + 1, now)
+
+    def request_finished(self, request: Request) -> None:
+        self.aborted.pop(request, None)
+        self.request_actions.pop(request, None)
+
+    def request_failed(self, request: Request) -> None:
+        reason = self.aborted.pop(request, None)
+        self.request_actions.pop(request, None)
+        self.oracles.capture(
+            "requestfailed",
+            page=self.request_page(request),
+            url=request.url,
+            text=request.failure or "Network request failed",
+            method=request.method,
+            aborted=reason is not None or self.closing_context,
+            has_response=request.existing_response is not None,
+        )
 
     def on_crash(self, *_: object) -> None:
         self.crashed = True
@@ -135,12 +245,12 @@ class BrowserSession:
         now = time.monotonic()
         self.crashes = [moment for moment in self.crashes if now - moment < 300]
         if self.crashes:
-            self.history.finish_run(self.run_id, RunStatus.BLOCKED, "browser_crash")
             await self.close()
+            self.history.finish_run(self.run_id, RunStatus.BLOCKED, "browser_crash")
             raise ValueError("Browser repeatedly crashed; run blocked.")
         self.crashes.append(now)
         if self.context is not None:
-            await self.context.close()
+            await self.close_context()
         assert self.browser is not None
         if not self.browser.is_connected():
             self.browser = await self.playwright.chromium.launch()
@@ -211,6 +321,7 @@ class BrowserSession:
                 else:
                     self.request_actions[request] = self.expected
             if reason:
+                self.mark_abort(request, reason)
                 self.network_denial = reason
                 self.history.append_event(
                     self.run_id,
@@ -229,9 +340,31 @@ class BrowserSession:
             await route.continue_()
         except Exception:
             self.policy.locks.add("history")
+            self.mark_abort(request, "history")
             await route.abort("blockedbyclient")
 
-    async def response(self, response: Response) -> None:
+    def response(self, response: Response) -> None:
+        if response.status in {401, 403}:
+            now = time.monotonic()
+            self.auth_console = {
+                key: value for key, value in self.auth_console.items() if now - value[1] <= 5
+            }
+            self.auth_console[(self.request_page(response.request), response.url)] = (
+                response.status,
+                now,
+            )
+        self.oracles.capture(
+            "response",
+            page=self.request_page(response.request),
+            url=response.url,
+            status=response.status,
+            method=response.request.method,
+        )
+        task = asyncio.create_task(self.process_response(response))
+        self.response_tasks.add(task)
+        task.add_done_callback(self.response_tasks.discard)
+
+    async def process_response(self, response: Response) -> None:
         request: Request = response.request
         expected = self.request_actions.pop(request, None)
         action_id = expected.action_id if expected else None
@@ -282,12 +415,40 @@ class BrowserSession:
         except Exception:
             self.policy.locks.add("history")
 
-    async def close(self) -> None:
+    async def close_context(self) -> None:
+        self.closing_context = True
         self.expected = None
-        if self.context is not None:
-            await self.context.close()
-        if self.browser is not None:
-            await self.browser.close()
-        if self.playwright is not None:
-            await self.playwright.stop()
-        self.context = self.page = self.browser = None
+        self.oracles.accepting = False
+        try:
+            await self.oracles.drain()
+            if self.response_tasks:
+                await asyncio.gather(*tuple(self.response_tasks))
+        finally:
+            if self.context is not None:
+                for event, handler in (
+                    ("response", self.response),
+                    ("console", self.console),
+                    ("weberror", self.web_error),
+                    ("requestfailed", self.request_failed),
+                    ("requestfinished", self.request_finished),
+                    ("page", self.new_page),
+                ):
+                    self.context.remove_listener(event, handler)
+                await self.context.close()
+            self.context = self.page = None
+            self.request_actions.clear()
+            self.aborted.clear()
+            self.blocked_console.clear()
+            self.auth_console.clear()
+            self.oracles.actions.clear()
+
+    async def close(self) -> None:
+        try:
+            await self.close_context()
+        finally:
+            if self.browser is not None:
+                self.browser.remove_listener("disconnected", self.on_crash)
+                await self.browser.close()
+            if self.playwright is not None:
+                await self.playwright.stop()
+            self.context = self.page = self.browser = None

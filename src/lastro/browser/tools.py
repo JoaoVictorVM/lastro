@@ -111,7 +111,7 @@ class BrowserTools:
                     or not is_same_origin(args.url, self.project.profile.target_url)
                 ):
                     decision = Decision("deny", "outside_target", "")
-                record_call(
+                self.session.action_sequence = record_call(
                     self.history,
                     self.run_id,
                     action_id,
@@ -164,6 +164,7 @@ class BrowserTools:
                 return None, Decision("deny", "outside_target", "")
 
             async def navigate_link() -> dict[str, str]:
+                self.session.mark_action(page, action_id)
                 await page.goto(href)
                 return {"status": "ok"}
 
@@ -230,8 +231,10 @@ class BrowserTools:
         async def execute_action() -> dict[str, str]:
             self.active()
             if name == "fill":
+                self.session.mark_action(page, action_id)
                 await locator.fill(args.value or "")
             elif name == "select":
+                self.session.mark_action(page, action_id)
                 await locator.select_option(args.value or "")
             else:
                 request = binding.request
@@ -245,6 +248,7 @@ class BrowserTools:
                 expected_url = urljoin(self.project.profile.target_url, path)
                 self.session.expected = ExpectedRequest(binding, expected_url, values, action_id)
                 self.session.network_denial = None
+                self.session.mark_action(page, action_id)
                 await locator.click()
                 if self.session.network_denial:
                     raise ValueError("DENIED at network layer: " + self.session.network_denial)
@@ -270,10 +274,8 @@ class BrowserTools:
                 else name + "_unavailable",
             }
         if name == "end_run":
-            try:
-                self.history.finish_run(self.run_id, RunStatus(args.outcome), args.reason)
-            finally:
-                await self.session.close()
+            await self.session.close()
+            self.history.finish_run(self.run_id, RunStatus(args.outcome), args.reason)
             return {"status": args.outcome}
         if name == "report_finding":
             if not all(
@@ -303,6 +305,7 @@ class BrowserTools:
                 )
             }
         if name == "navigate":
+            self.session.mark_action(page, action_id)
             await page.goto(args.url or "")
         elif name == "screenshot":
             image = await page.screenshot(mask=[page.locator('input[type="password"]')])
