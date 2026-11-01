@@ -50,3 +50,30 @@ def test_destructive_name() -> None:
     policy = engine()
     assert policy.destructive("Inativar funcionário")
     assert not policy.destructive("Excluiria")
+
+
+def test_config_and_policy_first_match() -> None:
+    from lastro.config.policy import Match, Rule
+
+    policy = engine()
+    policy.profile.policy.rules = [
+        Rule(id="first", effect="deny", match=Match(operations=["read"])),
+        Rule(id="second", effect="allow"),
+    ]
+    assert policy.decide(Action("read"), True).reason == "first"
+    assert policy.decide(Action("delete"), True).reason == "no-destructive"
+
+
+def test_executor_hook_blocks_other_browser_tools_and_local_files() -> None:
+    from lastro.browser.permissions import decision
+
+    assert "allow" in str(decision("mcp__lastro__observe"))
+    for tool in (
+        "mcp__arbitrary_browser__navigate",
+        "Bash",
+        "Read",
+        "Grep",
+        "PowerShell",
+        "mcp__lastro__execute",
+    ):
+        assert "deny" in str(decision(tool))

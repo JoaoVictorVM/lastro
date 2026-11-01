@@ -27,5 +27,18 @@
     {
       "serverName": "lastro"
     }
-  ]
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "lastro-permission-hook"
+          }
+        ]
+      }
+    ]
+  }
 }

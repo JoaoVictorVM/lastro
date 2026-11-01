@@ -10,9 +10,10 @@ from typing import Any
 
 import pytest
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from playwright.async_api import Browser, async_playwright
-from starlette.responses import JSONResponse
+from starlette.middleware.base import RequestResponseEndpoint
+from starlette.responses import JSONResponse, Response
 
 from lastro.config.loader import ProjectContext, load_project
 from lastro.doctor.checks import playwright_browsers_dir
@@ -47,6 +48,7 @@ def chromium(monkeypatch: pytest.MonkeyPatch) -> None:
 class DemoServer:
     url: str
     state_dir: Path
+    access_log: list[tuple[str, str]]
 
     def user(self, key: str) -> tuple[str, str]:
         user = next(item for item in load_seed_users({}) if item.key == key)
@@ -65,6 +67,13 @@ def _with_test_routes(app: FastAPI) -> FastAPI:
 def demo_server(tmp_path: Path, chromium: None) -> Iterator[DemoServer]:
     state_dir = tmp_path / "demo-state"
     app = _with_test_routes(create_app(DemoConfig(state_dir=state_dir), FlagState.only()))
+    access_log: list[tuple[str, str]] = []
+
+    @app.middleware("http")
+    async def record_access(request: Request, call_next: RequestResponseEndpoint) -> Response:
+        access_log.append((request.method, request.url.path))
+        return await call_next(request)
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
@@ -77,7 +86,7 @@ def demo_server(tmp_path: Path, chromium: None) -> Iterator[DemoServer]:
             raise RuntimeError("demo não iniciou")
         time.sleep(0.05)
     try:
-        yield DemoServer(url=f"http://127.0.0.1:{port}", state_dir=state_dir)
+        yield DemoServer(url=f"http://127.0.0.1:{port}", state_dir=state_dir, access_log=access_log)
     finally:
         server.should_exit = True
         thread.join(timeout=15)

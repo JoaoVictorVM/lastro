@@ -78,6 +78,8 @@ class ExpectedRequest:
 
 def denied_endpoint(pattern: str, url: str) -> bool:
     path = urlsplit(url).path
+    if pattern.endswith("/*") and not pattern.endswith("/**"):
+        pattern += "*"
     if pattern.endswith("/**"):
         prefix = pattern[:-3]
         return path == prefix or path.startswith(prefix + "/")

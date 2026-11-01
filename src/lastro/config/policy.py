@@ -49,7 +49,7 @@ class RequestBinding(Strict):
     path: Text
     encoding: Literal["json", "form"] = "form"
     id_field: Text | None = None
-    success_status: int = Field(default=201, ge=200, le=299)
+    success_status: int = Field(default=201, ge=200, le=399)
     response_id: Text | None = None
     location_id: bool = False
 
@@ -74,6 +74,7 @@ class Binding(Strict):
     form: Text | None = None
     fields: dict[str, str] = Field(default_factory=dict[str, str])
     technical_fields: list[str] = Field(default_factory=list[str])
+    field_values: dict[str, list[str]] = Field(default_factory=dict[str, list[str]])
     request: RequestBinding | None = None
     record_parameter: Text = "id"
 
@@ -86,6 +87,11 @@ class Binding(Strict):
             raise ValueError("field mappings must be unique")
         if set(self.fields.values()) & set(self.technical_fields):
             raise ValueError("technical fields cannot replace business fields")
+        if any(
+            key not in self.fields.values() or not values
+            for key, values in self.field_values.items()
+        ):
+            raise ValueError("field_values requires mapped fields and nonempty choices")
         return self
 
 

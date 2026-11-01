@@ -22,6 +22,8 @@ dependencies = [
 
 [project.scripts]
 lastro = "lastro.cli.app:main"
+lastro-browser = "lastro.browser.server:main"
+lastro-permission-hook = "lastro.browser.permissions:main"
 
 [build-system]
 requires = ["hatchling"]

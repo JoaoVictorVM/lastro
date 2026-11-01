@@ -205,3 +205,13 @@ class SessionStateStore:
         if loaded is None:
             raise SessionRefError("invalid")
         return loaded.state
+
+
+def create_private_file(path: Path) -> None:
+    """Cria arquivo owner-only para canais internos que também carregam segredos."""
+    _create_private_file(path)
+
+
+def ensure_private_directory(path: Path) -> None:
+    """Garante diretório owner-only para canais internos do projeto."""
+    _ensure_private_dir(path)

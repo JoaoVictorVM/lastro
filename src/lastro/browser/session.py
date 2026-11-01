@@ -1,6 +1,7 @@
 """Contexto da run com interceptação instalada antes de criar páginas."""
 
 import asyncio
+import os
 import time
 from collections.abc import Callable
 from typing import Any
@@ -17,10 +18,12 @@ from playwright.async_api import (
 )
 
 from lastro.auth import AuthSessionManager
-from lastro.browser.bindings import ExpectedRequest, denied_endpoint
+from lastro.browser.bindings import ExpectedRequest, denied_endpoint, path_parameters
 from lastro.browser.network import AuxiliaryTransport
 from lastro.browser.policy import PolicyEngine
+from lastro.browser.provenance import Provenance
 from lastro.config.loader import ProjectContext
+from lastro.config.policy import safe_path
 from lastro.config.schema import is_same_origin
 from lastro.history import EventType, HistoryStore, RunStatus
 
@@ -45,20 +48,43 @@ class BrowserSession:
         self.expected: ExpectedRequest | None = None
         self.crashes: list[float] = []
         self.crashed = False
+        self.needs_refresh = False
         self.network_denial: str | None = None
-        self.request_actions: dict[Request, str] = {}
+        self.request_actions: dict[Request, ExpectedRequest] = {}
+        self.provenance = Provenance(history, run_id, project.profile)
         self.lock = asyncio.Lock()
+        self.secrets: set[str] = {
+            value
+            for key in project.profile.credential_variable_names()
+            if (value := os.environ.get(key))
+        }
+
+    def sanitize(self, text: str) -> str:
+        for secret in sorted(self.secrets, key=len, reverse=True):
+            text = text.replace(secret, "[REDACTED]")
+        return text
 
     async def start(self) -> Page:
         self.active()
         if self.crashed:
             await self.recover()
             raise ValueError("Browser restarted; re-observe the page before acting.")
+        if self.needs_refresh and self.browser is not None:
+            self.expected = None
+            outcome = await self.auth.handle_unauthorized(self.browser)
+            if self.context is not None:
+                await self.context.close()
+            await self.open_context()
+            self.needs_refresh = False
+            if not outcome.result.is_verified:
+                self.policy.locks.add("tenant")
+            raise ValueError("Session refreshed; re-observe the page before acting.")
         if self.page is not None:
             return self.page
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch()
         assert self.browser is not None
+        self.browser.on("disconnected", self.on_crash)
         await self.auth.start(self.browser)
         self.active()
         await self.open_context()
@@ -68,6 +94,11 @@ class BrowserSession:
     async def open_context(self) -> None:
         assert self.browser is not None
         self.context = await self.auth.open_context(self.browser)
+        self.secrets.update(
+            cookie.get("value", "")
+            for cookie in await self.context.cookies()
+            if cookie.get("value")
+        )
         await self.context.route("**/*", self.route)
         await self.context.route_web_socket("**/*", lambda ws: ws.close())
         self.context.on("response", self.response)
@@ -89,7 +120,7 @@ class BrowserSession:
                 self.run_id,
                 EventType.POLICY_DECISION,
                 policy_decision="allow",
-                payload={"source": kind, "text": text[:8000]},
+                payload={"source": kind, "text": self.sanitize(text[:8000])},
             )
         except Exception:
             self.policy.locks.add("history")
@@ -111,6 +142,10 @@ class BrowserSession:
         if self.context is not None:
             await self.context.close()
         assert self.browser is not None
+        if not self.browser.is_connected():
+            self.browser = await self.playwright.chromium.launch()
+            assert self.browser is not None
+            self.browser.on("disconnected", self.on_crash)
         await self.auth.handle_browser_restart(self.browser)
         await self.open_context()
         self.crashed = False
@@ -134,6 +169,7 @@ class BrowserSession:
             profile = self.project.profile
             url = request.url
             parts = urlsplit(url)
+            safe_path(parts.path or "/")
             reason: str | None = None
             if parts.scheme not in {"http", "https"} or parts.username or parts.password:
                 reason = "invalid_url"
@@ -159,7 +195,13 @@ class BrowserSession:
                     return
                 else:
                     reason = "outside_target"
-            elif request.method not in {"GET", "HEAD", "OPTIONS"}:
+            elif request.method not in {"GET", "HEAD", "OPTIONS"} or any(
+                binding.operation != "read"
+                and binding.request is not None
+                and binding.request.method == request.method
+                and path_parameters(binding.request.path, parts.path) is not None
+                for binding in profile.policy.bindings
+            ):
                 if self.policy.locks or self.auth.verified_context is None:
                     reason = "write_lock"
                 elif self.expected is None or not self.expected.consume(
@@ -167,7 +209,7 @@ class BrowserSession:
                 ):
                     reason = "unbound_write"
                 else:
-                    self.request_actions[request] = self.expected.action_id
+                    self.request_actions[request] = self.expected
             if reason:
                 self.network_denial = reason
                 self.history.append_event(
@@ -191,16 +233,40 @@ class BrowserSession:
 
     async def response(self, response: Response) -> None:
         request: Request = response.request
-        action_id = self.request_actions.pop(request, None)
+        expected = self.request_actions.pop(request, None)
+        action_id = expected.action_id if expected else None
         if response.status in {401, 403} or (
             request.is_navigation_request()
             and urlsplit(response.url).path == urlsplit(self.project.profile.login_url).path
         ):
             self.auth.invalidate()
+            self.needs_refresh = True
             self.policy.locks.add("tenant")
             self.expected = None
         try:
             self.active()
+            if expected is not None:
+                binding = expected.binding
+                contract = binding.request
+                if (
+                    binding.operation == "create"
+                    and contract is not None
+                    and response.status == contract.success_status
+                ):
+                    record: object = None
+                    if contract.location_id:
+                        from urllib.parse import urljoin
+
+                        location = urljoin(response.url, response.headers.get("location", ""))
+                        if is_same_origin(location, self.project.profile.target_url):
+                            record = urlsplit(location).path.rstrip("/").rsplit("/", 1)[-1]
+                    elif contract.response_id:
+                        data: Any = await response.json()
+                        for key in contract.response_id.split("."):
+                            data = data[key]
+                        record = data
+                    if isinstance(record, str | int) and not isinstance(record, bool):
+                        self.provenance.record(binding.entity, str(record), expected.action_id)
             self.history.append_event(
                 self.run_id,
                 EventType.POLICY_DECISION,
