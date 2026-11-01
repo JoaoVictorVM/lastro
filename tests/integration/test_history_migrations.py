@@ -80,7 +80,7 @@ def _schema(path: Path) -> list[tuple[str, str, str | None]]:
 def test_initial_migration_creates_complete_minimum_schema(tmp_path: Path) -> None:
     database = Database(tmp_path / "history.sqlite")
 
-    assert apply_migrations(database) == [1]
+    assert apply_migrations(database, MIGRATIONS[:1]) == [1]
 
     with database.connection() as conn:
         objects = {
@@ -104,7 +104,7 @@ def test_initial_migration_creates_complete_minimum_schema(tmp_path: Path) -> No
         assert (migration["version"], migration["name"]) == (1, "initial")
         assert migration["checksum_sha256"] == MIGRATIONS[0].checksum
     assert schema_version(database) == 1
-    assert apply_migrations(database) == []
+    assert apply_migrations(database, MIGRATIONS[:1]) == []
 
 
 def test_failed_migration_leaves_database_unchanged(tmp_path: Path) -> None:
@@ -113,7 +113,7 @@ def test_failed_migration_leaves_database_unchanged(tmp_path: Path) -> None:
     apply_migrations(database)
     before = _schema(path)
     broken = Migration(
-        version=2,
+        version=3,
         name="broken",
         statements=(
             "CREATE TABLE extra (id TEXT PRIMARY KEY)",
@@ -125,13 +125,13 @@ def test_failed_migration_leaves_database_unchanged(tmp_path: Path) -> None:
     with pytest.raises(MigrationError) as info:
         apply_migrations(database, [*MIGRATIONS, broken])
 
-    assert info.value.version == 2
+    assert info.value.version == 3
     assert str(info.value).startswith(
-        "A migração 2 do banco falhou; o banco não foi alterado. "
+        "A migração 3 do banco falhou; o banco não foi alterado. "
         "Execute 'lastro backup' e reporte o problema."
     )
     assert _schema(path) == before
-    assert schema_version(database) == 1
+    assert schema_version(database) == 2
 
 
 def test_failed_first_migration_leaves_empty_database_without_version(tmp_path: Path) -> None:
@@ -157,8 +157,33 @@ def test_changed_published_migration_is_refused(tmp_path: Path) -> None:
 
 def test_unknown_newer_version_is_refused(tmp_path: Path) -> None:
     database = Database(tmp_path / "history.sqlite")
-    newer = Migration(version=2, name="newer", statements=("CREATE TABLE newer (id TEXT)",))
+    newer = Migration(version=3, name="newer", statements=("CREATE TABLE newer (id TEXT)",))
     apply_migrations(database, [*MIGRATIONS, newer])
 
     with pytest.raises(MigrationError, match="desconhecida"):
         apply_migrations(database)
+
+
+def test_oracle_migration_preserves_existing_runs(tmp_path: Path) -> None:
+    database = Database(tmp_path / "history.sqlite")
+    apply_migrations(database, MIGRATIONS[:1])
+    before = database.read(
+        lambda conn: conn.execute(
+            "SELECT checksum_sha256 FROM schema_migrations WHERE version = 1"
+        ).fetchone()[0]
+    )
+    assert apply_migrations(database) == [2]
+    assert (
+        database.read(
+            lambda conn: conn.execute(
+                "SELECT checksum_sha256 FROM schema_migrations WHERE version = 1"
+            ).fetchone()[0]
+        )
+        == before
+    )
+    assert (
+        database.read(
+            lambda conn: conn.execute("SELECT COUNT(*) FROM oracle_signals").fetchone()[0]
+        )
+        == 0
+    )

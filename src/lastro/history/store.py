@@ -59,6 +59,7 @@ from lastro.history.models import (
     RunStatus,
     RunSummary,
 )
+from lastro.history.oracles import record_signal, select_signals
 from lastro.history.processes import ProcessChecker, process_exists
 from lastro.history.queries import select_runs
 from lastro.history.runs import (
@@ -74,6 +75,8 @@ from lastro.history.runs import (
     select_run,
     validate_mission,
 )
+from lastro.oracles.models import OracleOccurrence, OracleSignal
+from lastro.oracles.sanitize import normalize
 from lastro.timeutil import utc_now
 
 type Clock = Callable[[], datetime]
@@ -355,6 +358,27 @@ class HistoryStore:
     ) -> list[EventRecord]:
         """Eventos em ordem de sequência depois do cursor; cada chamada abre e fecha a leitura."""
         return self._database.read(lambda conn: select_events(conn, run_id, after_sequence, limit))
+
+    def record_oracle_signal(self, run_id: str, occurrence: OracleOccurrence) -> OracleSignal:
+        if run_id in self._failed_closed:
+            raise HistoryUnavailableError()
+        normalized = normalize(occurrence)
+        try:
+            return self._database.write(lambda conn: record_signal(conn, run_id, normalized))
+        except HistoryUnavailableError:
+            event = prepare_event(EventType.ORACLE_SIGNAL, payload=normalized.model_dump())
+            self._fail_closed(run_id, event, normalized.timestamp)
+            raise
+
+    def list_oracle_signals(self, run_id: str, limit: int | None = None) -> list[OracleSignal]:
+        if run_id in self._failed_closed:
+            raise HistoryUnavailableError()
+        try:
+            return self._database.read(lambda conn: select_signals(conn, run_id, limit))
+        except HistoryUnavailableError:
+            event = prepare_event(EventType.ORACLE_SIGNAL, payload={"operation": "list"})
+            self._fail_closed(run_id, event, self._now())
+            raise
 
     def register_artifact(
         self,

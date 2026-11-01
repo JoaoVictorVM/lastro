@@ -51,6 +51,7 @@ from lastro.history.models import (
 )
 from lastro.history.processes import ProcessChecker, process_exists
 from lastro.history.store import HistoryStore, open_history
+from lastro.oracles.models import OracleOccurrence, OracleSignal
 
 __all__ = [
     "DEFAULT_HISTORY_LIMIT",
@@ -87,6 +88,8 @@ __all__ = [
     "MigrationError",
     "Mission",
     "MissionSource",
+    "OracleOccurrence",
+    "OracleSignal",
     "PolicyDecision",
     "ProcessChecker",
     "RetryPolicy",

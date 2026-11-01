@@ -75,3 +75,8 @@ auxiliary_origins = []
 bindings = []
 rules = []
 preauthorized_records = []
+
+# Ruídos conhecidos: glob completo e sensível a maiúsculas (* e ?).
+[profiles.${profile_name}.oracles]
+ignore = []
+# ignore = [{ url_path = "/analytics/*" }, { message = "*Known noisy widget*" }]

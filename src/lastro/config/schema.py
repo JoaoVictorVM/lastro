@@ -19,6 +19,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from lastro.config.policy import BrowserPolicy, safe_path
+from lastro.oracles.ignore import OracleSettings
 
 DEFAULT_TIMEZONE = "America/Sao_Paulo"
 DEFAULT_EXECUTOR = "claude-code"
@@ -288,6 +289,7 @@ class Profile(BaseModel):
     )
     auth: AuthSettings = Field(default_factory=AuthSettings)
     policy: BrowserPolicy = Field(default_factory=BrowserPolicy)
+    oracles: OracleSettings = Field(default_factory=OracleSettings)
 
     @field_validator("denied_endpoint_patterns")
     @classmethod

@@ -11,7 +11,7 @@ from types import ModuleType
 
 from lastro.history.database import Database
 from lastro.history.errors import MigrationError
-from lastro.history.migrations import v001_initial
+from lastro.history.migrations import v001_initial, v002_oracle_signals
 from lastro.timeutil import utc_now_iso
 
 _BOOTSTRAP = """
@@ -40,7 +40,10 @@ class Migration:
         return cls(version=module.VERSION, name=module.NAME, statements=tuple(module.STATEMENTS))
 
 
-MIGRATIONS: tuple[Migration, ...] = (Migration.from_module(v001_initial),)
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration.from_module(v001_initial),
+    Migration.from_module(v002_oracle_signals),
+)
 
 
 def _applied(conn: sqlite3.Connection) -> dict[int, tuple[str, str]]:
