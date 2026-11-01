@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import zipfile
 
@@ -6,6 +7,7 @@ import pytest
 from lastro.config.loader import ProjectContext
 from lastro.history import (
     EventType,
+    HistoryUnavailableError,
     InvalidEventError,
     RunNotActiveError,
     TextMission,
@@ -107,3 +109,27 @@ def test_backup_restores_oracle_signals_and_events(history_context: ProjectConte
         ).fetchall()
         assert len(events) == 2
         assert row["last_event_id"] == events[-1]["id"]
+
+
+def test_write_failure_uses_redacted_fallback_and_lock(
+    history_context: ProjectContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = open_history(history_context)
+    run_id = store.create_run(history_context, TextMission("failure")).record.id
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise HistoryUnavailableError()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Database, "write", fail)
+        with pytest.raises(HistoryUnavailableError):
+            store.record_oracle_signal(run_id, occurrence(message="password=fictional-test-value"))
+    fallback = store.run_paths(run_id).run_dir / "fallback-events.jsonl"
+    text = fallback.read_text(encoding="utf-8")
+    assert "fictional-test-value" not in text
+    assert json.loads(text)["payload"]["message"] == "password=[REDACTED]"
+    with pytest.raises(HistoryUnavailableError):
+        store.record_oracle_signal(run_id, occurrence("later"))
+    with pytest.raises(HistoryUnavailableError):
+        store.list_oracle_signals(run_id)

@@ -61,8 +61,8 @@ class OracleCollector:
     ) -> None:
         if not self.accepting or self.failed:
             return
-        now, timestamp = self.monotonic(), self.utc()
         try:
+            now, timestamp = self.monotonic(), self.utc()
             signal_type: SignalType
             if kind in {"console", "pageerror"}:
                 if kind == "console" and level != "error":

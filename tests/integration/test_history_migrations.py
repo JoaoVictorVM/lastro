@@ -3,9 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from lastro.history import MigrationError
+from lastro.config.loader import ProjectContext
+from lastro.history import MigrationError, TextMission, open_history
 from lastro.history.database import Database
 from lastro.history.migrations import MIGRATIONS, Migration, apply_migrations, schema_version
+from lastro.history.runs import insert_run
 
 TABLES = {
     "schema_migrations",
@@ -164,15 +166,29 @@ def test_unknown_newer_version_is_refused(tmp_path: Path) -> None:
         apply_migrations(database)
 
 
-def test_oracle_migration_preserves_existing_runs(tmp_path: Path) -> None:
+def test_oracle_migration_preserves_existing_runs(
+    tmp_path: Path,
+    history_context: ProjectContext,
+) -> None:
     database = Database(tmp_path / "history.sqlite")
     apply_migrations(database, MIGRATIONS[:1])
+    store = open_history(history_context)
+    record = store.create_run(history_context, TextMission("existing mission")).record
+    database.write(lambda conn: insert_run(conn, record))
     before = database.read(
         lambda conn: conn.execute(
             "SELECT checksum_sha256 FROM schema_migrations WHERE version = 1"
         ).fetchone()[0]
     )
     assert apply_migrations(database) == [2]
+    assert (
+        database.read(
+            lambda conn: conn.execute(
+                "SELECT mission_text FROM runs WHERE id = ?", (record.id,)
+            ).fetchone()[0]
+        )
+        == "existing mission"
+    )
     assert (
         database.read(
             lambda conn: conn.execute(
@@ -187,3 +203,15 @@ def test_oracle_migration_preserves_existing_runs(tmp_path: Path) -> None:
         )
         == 0
     )
+
+
+def test_oracle_migration_failure_rolls_back(tmp_path: Path) -> None:
+    database = Database(tmp_path / "history.sqlite")
+    apply_migrations(database, MIGRATIONS[:1])
+    before = _schema(database.path)
+    oracle = MIGRATIONS[1]
+    broken = Migration(oracle.version, oracle.name, (*oracle.statements, "SELECT * FROM missing"))
+    with pytest.raises(MigrationError):
+        apply_migrations(database, [MIGRATIONS[0], broken])
+    assert _schema(database.path) == before
+    assert schema_version(database) == 1
