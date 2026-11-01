@@ -98,7 +98,11 @@ class BrowserTools:
                 args = Arguments.model_validate(raw)
                 if name not in TOOLS:
                     raise ValueError("Unknown tool")
-                decision = Decision("allow", "read", "")
+                decision = (
+                    self.session.policy.decide(Action("read"), False)
+                    if name in {"observe", "navigate", "screenshot", "wait_for"}
+                    else Decision("allow", "metadata", "")
+                )
                 operation: Any = None
                 if name in {"click", "fill", "select", "submit"}:
                     operation, decision = await self.prepare(name, args, action_id)
@@ -163,7 +167,7 @@ class BrowserTools:
                 await page.goto(href)
                 return {"status": "ok"}
 
-            return navigate_link, Decision("allow", "navigation", "")
+            return navigate_link, self.session.policy.decide(Action("read"), False)
         bindings: list[Binding] = []
         for binding in self.project.profile.policy.bindings:
             if path_parameters(binding.route, urlsplit(page.url).path) is None:

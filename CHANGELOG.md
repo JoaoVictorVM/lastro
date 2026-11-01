@@ -70,3 +70,15 @@ Planned scope: walking skeleton. The changes listed under `Unreleased` will move
 v0.1.0 is released.
 
 [Unreleased]: https://github.com/JoaoVictorVM/lastro/commits/main
+
+
+## Browser tooling
+
+- Add a run-scoped MCP stdio server with semantic browser tools, policy decisions,
+  audit events, screenshots and finding submissions.
+- Enforce explicit write bindings, record provenance, tenant checks and network guards.
+- Add pinned HTTPS auxiliary transport, authenticated local tenant recovery and
+  restrictive executor configuration with a Lastro-only tool hook.
+- Keep approval execution, clarification and executor-driven mission orchestration
+  unavailable until their respective integrations are installed. Agent prompt-injection
+  behavior and actual executor permission denials remain separate acceptance checks.
