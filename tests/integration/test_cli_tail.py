@@ -125,3 +125,53 @@ def test_tail_of_unknown_run_fails(runner: CliRunner, history_context: ProjectCo
 
     assert result.exit_code == 1
     assert "run não encontrada" in result.stderr
+
+
+def test_tail_formats_oracle_action_count_and_background(
+    runner: CliRunner,
+    store: HistoryStore,
+    run_id: str,
+) -> None:
+    from lastro.oracles.models import OracleOccurrence
+
+    action = store.append_event(run_id, EventType.TOOL_CALL, tool_name="submit", correlation_id="a")
+    occurrence = OracleOccurrence(
+        occurrence_id="one",
+        signal_type="http_5xx",
+        url="https://example.test/api/employees/12",
+        url_path="/api/employees/12",
+        http_method="PUT",
+        http_status=500,
+        message="HTTP 500",
+        timestamp="2026-11-01T15:00:04.000000Z",
+        action_id="a",
+        action_sequence=action.sequence,
+    )
+    store.record_oracle_signal(run_id, occurrence)
+    store.record_oracle_signal(run_id, occurrence.model_copy(update={"occurrence_id": "two"}))
+    store.record_oracle_signal(
+        run_id,
+        OracleOccurrence(
+            occurrence_id="background",
+            signal_type="js_error",
+            url=None,
+            url_path="",
+            http_method=None,
+            http_status=None,
+            message="bad\n\x1b[31mtext\x1b[0m\r\x07",
+            timestamp="2026-11-01T15:00:05.000000Z",
+            action_id=None,
+            action_sequence=None,
+        ),
+    )
+    store.finish_run(run_id, "completed")
+    result = runner.invoke(app, ["tail", run_id])
+    assert result.exit_code == 0, result.output
+    assert (
+        f"ORACLE http_5xx PUT /api/employees/12 -> 500 (after action #{action.sequence})"
+        in result.stdout
+    )
+    assert "occurrences: 2" in result.stdout
+    assert "no action (background)" in result.stdout
+    assert "bad text" in result.stdout
+    assert "\x1b" not in result.stdout and "\x07" not in result.stdout

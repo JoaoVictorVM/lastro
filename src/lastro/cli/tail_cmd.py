@@ -1,5 +1,6 @@
 """Comando lastro tail: acompanha os eventos de uma run por cursor de sequência."""
 
+import re
 import time
 from collections.abc import Callable
 from typing import Annotated
@@ -8,8 +9,8 @@ import typer
 
 from lastro.cli import output
 from lastro.cli.state import HISTORY_ERROR_EXIT_CODE, get_state
-from lastro.history import EventRecord, HistoryError, PolicyDecision
-from lastro.history.redaction import canonical_json, preview
+from lastro.history import EventRecord, EventType, HistoryError, PolicyDecision
+from lastro.history.redaction import canonical_json, preview, redact_text
 from lastro.timeutil import to_display_zone
 
 POLL_INTERVAL_SECONDS = 0.5
@@ -25,6 +26,35 @@ DECISION_COLORS = {
 sleep: Callable[[float], None] = time.sleep
 
 
+def terminal_text(value: object) -> str:
+    text = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", str(value))
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    return "".join(c if c.isprintable() else " " for c in redact_text(text))
+
+
+def oracle_description(event: EventRecord) -> str | None:
+    payload = event.payload
+    if not isinstance(payload, dict) or "signal_type" not in payload:
+        return None
+    kind = terminal_text(payload["signal_type"])
+    path = terminal_text(payload.get("url_path", ""))
+    method = terminal_text(payload.get("http_method") or "")
+    status = payload.get("http_status")
+    detail = (
+        f"-> {terminal_text(status)}"
+        if status is not None
+        else preview(terminal_text(payload.get("message", "")), 256)
+    )
+    sequence = payload.get("action_sequence")
+    action = (
+        f"after action #{terminal_text(sequence)}"
+        if sequence is not None
+        else ("no action (background)")
+    )
+    count = payload.get("occurrence_count", 1)
+    return f"ORACLE {kind} {method} {path} {detail} ({action}) occurrences: {terminal_text(count)}"
+
+
 def describe(event: EventRecord) -> str:
     if event.tool_name is not None:
         text = event.tool_name
@@ -38,6 +68,10 @@ def describe(event: EventRecord) -> str:
 
 def format_event(event: EventRecord, timezone: str) -> str:
     moment = to_display_zone(event.timestamp, timezone).strftime("%H:%M:%S")
+    if event.event_type == EventType.ORACLE_SIGNAL:
+        description = oracle_description(event)
+        if description is not None:
+            return f"{moment}  {description}"
     parts = [moment, event.event_type.value]
     description = describe(event)
     if description:

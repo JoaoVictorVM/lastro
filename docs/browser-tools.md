@@ -8,7 +8,8 @@ separate integration. Diagnostics go to stderr; stdout is reserved for MCP.
 The server owns one Chromium context per run and audits calls before performing actions.
 Observations contain untrusted page data and are capped at 8,000 characters. Screenshots
 and finding submissions reference the run's artifact registry. Console and response events
-carry the run; response action IDs are present only for an authorized, matched request.
+carry the run. Response policy events use the matched write request as their provenance;
+oracle action references use the temporal window described below.
 
 ## Configure writes explicitly
 
@@ -77,7 +78,55 @@ never a limits or history lock. Missing servers are reported without launching a
 
 The first page crash in five minutes recreates the context and verifies the session; the
 caller must observe again and the failed action is never retried. A second crash blocks
-the run. `end_run` records a terminal outcome and closes the browser.
+the run. `end_run` drains captured signals, closes the browser and records a terminal outcome.
+
+## Automatic oracle signals
+
+The exploration context captures console errors and unhandled exceptions as `js_error`,
+HTTP 400-499 responses as `http_4xx` (except 401/403), HTTP 500-599 as `http_5xx`, and
+transport failures without an HTTP response as `request_failed`. Authentication responses,
+guard aborts and their identifiable Chromium diagnostics are excluded. Login and tenant
+verification browsers remain private. A signal records an observation, not a confirmed bug.
+
+Each signal references the latest dispatched navigate, click, fill, select or submit on
+the same page within an inclusive five-second window. Popups inherit their opener's action
+until their first own action. Background signals have no action. This timing is not proof
+of causation; observe, denied actions, screenshots and waits do not replace the trigger.
+
+Repeated type, URL path and redacted message aggregate within a run, with a stable signal
+ID and occurrence count. Every occurrence has an append-only event; duplicate delivery of
+one occurrence does not increment the count. URLs omit userinfo, query and fragment.
+Messages are redacted before truncation and hashing. History failure blocks continuation.
+
+Configure known noise before starting a new run:
+
+```toml
+[profiles.staging.oracles]
+ignore = [{url_path = "/analytics/*"}, {message = "*Known noisy widget*"}]
+```
+
+Rules combine with OR and match the full sanitized path or message, case sensitively on
+all platforms. `*` matches any characters including `/`, and `?` matches one character.
+Other characters are literal; classes and backslash escapes are rejected. Each rule has
+exactly one property, patterns contain 1-256 characters, paths start with `/`, and at most
+100 distinct rules are accepted. Matching occurrences create neither aggregates nor events.
+
+The next `observe` returns `oracle_signals` inside its untrusted JSON content, containing
+the five most recently updated aggregates, newest first. Empty runs return an empty list.
+Observations do not consume signals. Summaries include the stable signal ID, type, path,
+method, status, message, timestamp, action ID, actual tool event sequence and count.
+Paths and messages are shortened to at most 256 characters, with `...` marking shortening.
+The snapshot shrinks to keep complete JSON and untrusted markers within 8,000 characters;
+`truncated` indicates shortened content. Full values remain in history.
+
+`lastro tail` shows each occurrence, for example
+`ORACLE http_5xx PUT /api/employees/12 -> 500 (after action #34) occurrences: 2`.
+Uncorrelated events show `no action (background)`; external terminal controls are removed.
+
+`HistoryStore.list_oracle_signals(run_id, limit=None)` exposes typed aggregates, including
+first and last occurrence metadata and the last event ID, even after the run ends. This is
+the durable input for a future report section. Report generation and findings tagged
+`source: oracle` are not implemented by the collector; signals do not create findings.
 
 ## Executor configuration and current boundaries
 

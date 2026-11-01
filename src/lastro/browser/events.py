@@ -11,8 +11,8 @@ def record_call(
     tool: str,
     arguments: object,
     decision: Decision,
-) -> None:
-    history.append_event(
+) -> int:
+    event = history.append_event(
         run_id, EventType.TOOL_CALL, tool_name=tool, arguments=arguments, correlation_id=action_id
     )
     history.append_event(
@@ -23,3 +23,4 @@ def record_call(
         policy_decision=decision.effect,
         payload={"reason": decision.reason, "fingerprint": decision.fingerprint},
     )
+    return event.sequence
