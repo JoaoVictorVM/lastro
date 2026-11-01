@@ -344,6 +344,9 @@ class BrowserSession:
             await route.abort("blockedbyclient")
 
     def response(self, response: Response) -> None:
+        if self.closing_context:
+            return
+        expected = self.request_actions.pop(response.request, None)
         if response.status in {401, 403}:
             now = time.monotonic()
             self.auth_console = {
@@ -360,13 +363,12 @@ class BrowserSession:
             status=response.status,
             method=response.request.method,
         )
-        task = asyncio.create_task(self.process_response(response))
+        task = asyncio.create_task(self.process_response(response, expected))
         self.response_tasks.add(task)
         task.add_done_callback(self.response_tasks.discard)
 
-    async def process_response(self, response: Response) -> None:
+    async def process_response(self, response: Response, expected: ExpectedRequest | None) -> None:
         request: Request = response.request
-        expected = self.request_actions.pop(request, None)
         action_id = expected.action_id if expected else None
         if response.status in {401, 403} or (
             request.is_navigation_request()
