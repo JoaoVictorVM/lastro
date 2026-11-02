@@ -79,7 +79,8 @@ never a limits or history lock. Missing servers are reported without launching a
 
 The first page crash in five minutes recreates the context and verifies the session; the
 caller must observe again and the failed action is never retried. A second crash blocks
-the run. `end_run` drains captured signals, closes the browser and records a terminal outcome.
+the run. `end_run` stops a pending video, drains captured signals, closes the browser, marks
+unevaluated criteria and records a terminal outcome; the report is generated afterwards.
 
 ## Automatic oracle signals
 
@@ -185,16 +186,17 @@ up outside Lastro, setting `cleaned_manually` and the timestamp; repeating it is
 records in the target system, and these commands make no network request.
 
 `HistoryStore.list_created_records(run_id=...)` returns the typed list (entity, system id,
-tenant, run, creation time, cleanup status, detail URL, instructions and warnings) for a
-future report section. `unidentified_warning(run_id, records)` builds the aggregated
-message `N created record(s) could not be identified automatically; check the target system
-for names starting with LASTRO-<id>.` The report itself is not implemented yet.
+tenant, run, creation time, cleanup status, detail URL, instructions and warnings) that the
+report's created-records section lists. `unidentified_warning(run_id, records)` builds the
+aggregated message `N created record(s) could not be identified automatically; check the
+target system for names starting with LASTRO-<id>.`
 
 ## Mission preparation
 
 Runs started with `lastro run start` record the content hash of the local skill bundle in
 `skills/lastro/`. In those runs, `observe`, `navigate`, `click`, `fill`, `select`, `submit`,
-`screenshot`, `wait_for`, `generate_test_data` and `report_finding` return
+`screenshot`, `wait_for`, `generate_test_data`, `report_finding`, `start_evidence_video` and
+`stop_evidence_video` return
 `mission_plan_required` until a plan exists, and `clarification_required` while the active plan
 has a blocking gap. The denial is audited like any other call and no browser is started.
 `mission_context`, `submit_mission_plan`, `ask_clarification`, `record_test_check` and
@@ -234,6 +236,75 @@ check only; it neither creates a finding nor marks a criterion.
 channel, the question is stored, `clarification_requested` is appended and the run waits in
 `awaiting_clarification` until the answer returns it to `running`. Answers are stored as
 user-provided information, never as approvals, and change no policy or lock.
+
+## Findings, criteria and evidence
+
+`report_finding` takes `title` (up to 120 characters), `flow` (up to 200), `preconditions`
+(up to 20), `steps` (1 to 30), `expected` with `text`, `source` (`mission_criterion`,
+`documentation`, `user_answer`, `heuristic` or `common_convention`) and `source_ref`,
+`observed`, `evidence` (up to 20 items with an `artifact_id` of this run and a `purpose`:
+`state`, `before`, `after`, `error` or `timing`), `classification`, `limitations`,
+`failure_domain` (`system`, `agent` or `tool`) and an optional `severity_suggestion` (`low`,
+`medium`, `high` or `critical`). Texts are limited to 4,000 characters. A `mission_criterion`
+source needs the id of a criterion of the active plan in `source_ref`. Missing required fields
+return `missing_finding_fields` with `Missing finding fields: <sorted list>.`; evidence from
+another run or an unknown id returns `Evidence must belong to this run.`. The agent can only
+submit `suspected` or `inconclusive`; `confirmed` returns `classification_not_allowed`.
+Environment, tenant, system version and origin come from the run and cannot be sent. The
+finding, its steps, its evidence links and `finding_submitted` are stored in one transaction;
+an identical submission returns the existing `finding_id` with `created: false`.
+
+Confirmation is an internal transition used by independent reproduction: it needs at least one
+evidence reference (`A confirmed finding needs at least 1 evidence reference.`) and a
+reproduced attempt recorded from another run. Findings in the `agent` or `tool` domain are
+harness problems and appear only in the report's agent and tool failures section.
+
+`record_criterion_result` takes a `criterion_id` of the active plan, `outcome` (`met`,
+`not_met`, `blocked` or `inconclusive`), `evidence_artifact_ids`, `note` and `reason`. `met`
+needs at least one evidence reference of the expected behavior and a note describing it;
+otherwise the call returns `positive_evidence_required`. Absence of errors is never enough.
+Criteria outside the active plan return `criterion_not_active`. Repeating the current result
+is idempotent; a change creates a new immutable revision. When the run ends, every criterion
+without a result is recorded as `inconclusive` with reason `not_evaluated`.
+
+`start_evidence_video` takes a `reason` and returns a `recording_id` with
+`max_duration_seconds` 60. Recording rotates the browser context: the storage state is kept
+in memory, the current URL is restored and the tenant is verified again before any other
+action runs. `stop_evidence_video` takes the active `recording_id` and returns the WebM
+`artifact_id`, `sha256`, duration and stop reason. After 60 seconds the same stop runs on its
+own and a later `stop_evidence_video` returns that result. Stable errors are
+`video_already_active`, `video_not_active`, `video_session_restore_failed` and
+`tenant_reverification_failed`; a failed verification keeps writes locked and discards the
+capture.
+
+## Reports
+
+After `run_ended`, `end_run` builds `runs/<run id>/report.md` from the history database and
+the artifact registry only, and returns `report_path`, `report_status` and a five-line
+summary (status, criteria met, confirmed, suspected and records pending cleanup). Sections:
+summary, mission and charter, environment and versions, criteria results, confirmed findings,
+suspected and inconclusive findings, oracle signals with their triggering actions, agent and
+tool failures, blocks and pending items, created records and cleanup, memory outcome and
+limitations. Untrusted text is escaped so it cannot add headings, links or images.
+
+Each confirmed finding gets a bug draft at `runs/<run id>/issues/<finding id>.md` with title,
+environment, steps, expected, observed, evidence and severity suggestion. Drafts are never
+published. Reports and drafts are immutable artifacts with SHA-256: generating again with the
+same inputs returns the same files, and different inputs fail instead of overwriting. A
+missing evidence file is reported as `⚠ evidence missing: <path>` and marks integrity as
+invalid. A template failure writes the raw data to `report.json`, records the error and leaves
+the run state untouched. `ReportBuilder.build_partial(run_id, reason)` writes
+`report.partial.md` for runs stopped early.
+
+`lastro report verify <run id>` recomputes size and SHA-256 of every registered artifact and
+changes nothing. It exits 0 when all match, 1 for an unknown run and 2 when a file is missing
+or changed, printing `Artifact <path> was modified after the run (expected <hash>)` for each
+changed file.
+
+`lastro report export --public <run id>` needs a ready report and writes `report.public.md`.
+Unless the run's profile was marked `public = true` (for targets without real data, such as
+the demo), the export omits tenant names, URLs, record ids, artifact ids, `LASTRO-*` names,
+screenshots and videos, and redacts known run values in free text.
 
 ## Executor configuration and current boundaries
 

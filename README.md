@@ -117,6 +117,10 @@ A mission is free text (`--mission`, up to 10,000 characters) or a Markdown file
 
 The agent interprets the mission; Lastro validates and stores the result. The agent reads the durable mission with `mission_context` and submits objectives, scope, explicit criteria, gaps, out-of-scope items and a charter with `submit_mission_plan`. Lastro builds the canonical charter `Explore <target> with <resources> to discover <information>`, with a 20 minute default time box capped by the run limit. Browser tools stay denied until a plan exists and while it has a blocking gap. Each applied heuristic is recorded with `record_test_check`, linked to real action ids of the run. See [docs/browser-tools.md](docs/browser-tools.md#mission-preparation) for the contracts.
 
+## Findings and reports
+
+The agent submits findings with `report_finding` (numbered steps, preconditions, the expected result with its source, the observed result and evidence ids from the same run) and records each criterion with `record_criterion_result`; `met` always needs positive evidence. Findings start as `suspected` or `inconclusive`, and agent or tool failures are kept apart from defects of the system under test. When the run ends, Lastro writes `runs/<run id>/report.md` from the history only, plus a bug draft per confirmed finding in `issues/`. `lastro report verify <run id>` recomputes the SHA-256 of every artifact and exits 2 when one changed, and `lastro report export --public <run id>` writes a copy without tenant names, URLs, record ids or screenshots. See [docs/browser-tools.md](docs/browser-tools.md#findings-criteria-and-evidence) for the contracts.
+
 ## Roadmap
 
 Each release adds one capability and ends with a measurable result.

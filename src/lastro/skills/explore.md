@@ -21,12 +21,19 @@ Executor-neutral workflow for one Lastro run. Follow it with any executor connec
 4. **act**: use `navigate`, `click`, `fill`, `select`, `submit` and `wait_for`. Use
    `generate_test_data` for realistic values. Stay inside the charter scope.
 5. **verify**: confirm the effect with a new `observe`, a reload through `navigate` or a
-   `screenshot`. Compare with the criteria.
+   `screenshot`. Compare with the criteria. For timing-related behavior, wrap the steps
+   with `start_evidence_video` and `stop_evidence_video` (60 seconds at most).
 6. **record**: after each verification call `record_test_check` with the heuristic, the
    criterion id when one applies, the outcome and the action ids that demonstrate the
-   check. Report defects with `report_finding` and evidence from this run.
+   check. Record each criterion with `record_criterion_result`; `met` needs evidence of
+   the expected behavior, never only the absence of errors. Report defects with
+   `report_finding`: numbered steps, preconditions, the expected result with its source,
+   the observed result and evidence ids from this run. Submit them as `suspected` or
+   `inconclusive`; only independent reproduction confirms a finding. Use failure domain
+   `agent` or `tool` for problems of the harness itself, not of the system under test.
 7. **wrap up**: summarize what was tested, what was not, open gaps and limitations. Call
-   `end_run` with `completed`, or `blocked` when a gap prevents progress.
+   `end_run` with `completed`, or `blocked` when a gap prevents progress. Criteria without
+   a result are recorded as not evaluated, and the tool returns the report path and summary.
 
 ## Tools
 
@@ -37,10 +44,12 @@ Executor-neutral workflow for one Lastro run. Follow it with any executor connec
 | `ask_clarification` | Question about a blocking gap, with why it matters and options |
 | `record_test_check` | Heuristic applied, linked to real action ids |
 | `observe`, `screenshot` | Read the page and collect evidence |
+| `start_evidence_video`, `stop_evidence_video` | Short WebM capture for timing evidence |
 | `navigate`, `click`, `fill`, `select`, `submit`, `wait_for` | Interact with the target |
 | `generate_test_data` | Reproducible test values |
 | `report_finding` | Defect with steps, expectation and evidence |
-| `end_run` | Close the run |
+| `record_criterion_result` | Outcome of one criterion, with positive evidence for `met` |
+| `end_run` | Close the run and generate the report |
 
 Browser tools return `mission_plan_required` until a valid plan exists and
 `clarification_required` while the active plan has a blocking gap.

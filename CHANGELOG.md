@@ -35,6 +35,10 @@ list the intended scope and contain no shipped changes until their release date 
   recorded in each run, `mission_context`, `submit_mission_plan` with a canonical charter,
   `record_test_check` linked to real actions, structured `ask_clarification`, and browser
   tools blocked until a valid plan exists.
+- Evidence and reporting: structured `report_finding` with server-side provenance,
+  `record_criterion_result` that requires positive evidence for `met`, on-demand WebM evidence
+  of up to 60 seconds, a Markdown report built only from the history at the end of each run,
+  bug drafts per confirmed finding, `lastro report verify` and `lastro report export --public`.
 
 ## [1.0.0] - Planned
 

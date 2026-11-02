@@ -233,3 +233,115 @@ def test_video_evidence_records_webm_in_demo(make_auth_project: Any) -> None:
     stored = history.run_dir(run_id) / artifact.relative_path
     assert stored.stat().st_size == artifact.size_bytes > 0
     assert not any((history.run_dir(run_id) / ".video").iterdir())
+
+
+def test_reporting_flow_over_stdio(make_auth_project: Any) -> None:
+    import json
+    import os
+    import sys
+
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    from mcp.types import TextContent
+
+    from lastro.reporting.integrity import verify_artifacts
+
+    project = make_auth_project()
+    context = project.context()
+    history = open_history(context)
+    run_id = history.create_run(
+        context, TextMission("Explore a lista de funcionários"), skill_bundle_version="e" * 64
+    ).record.id
+    base = context.profile.target_url
+
+    async def scenario() -> dict[str, Any]:
+        parameters = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "lastro.browser.server", "--profile", "demo"],
+            cwd=str(project.config_path.parent),
+            env=dict(os.environ),
+        )
+        async with stdio_client(parameters) as (read, write), ClientSession(read, write) as client:
+            await client.initialize()
+
+            async def tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+                result = await client.call_tool(name, arguments)
+                content = result.content[0]
+                assert isinstance(content, TextContent)
+                return json.loads(content.text)
+
+            plan = await tool("submit_mission_plan", PLAN)
+            assert plan["exploration_allowed"], plan
+            assert "error" not in await tool("navigate", {"url": base + "/employees"})
+            shot = await tool("screenshot", {})
+            finding_result = await tool(
+                "report_finding",
+                finding(
+                    evidence=[{"artifact_id": shot["artifact_id"], "purpose": "state"}],
+                    expected={
+                        "text": "O telefone permanece após recarregar",
+                        "source": "mission_criterion",
+                        "source_ref": plan["criterion_ids"][0],
+                    },
+                ),
+            )
+            assert finding_result["created"], finding_result
+            met = await tool(
+                "record_criterion_result",
+                {
+                    "criterion_id": plan["criterion_ids"][1],
+                    "outcome": "met",
+                    "evidence_artifact_ids": [shot["artifact_id"]],
+                    "note": "A lista exibe a mensagem de e-mail inválido.",
+                    "reason": "positive_behavior_observed",
+                },
+            )
+            assert met["outcome"] == "met", met
+            ended = await tool("end_run", {"outcome": "completed", "reason": "mission done"})
+            return {"ended": ended, "finding": finding_result, "shot": shot}
+
+    result = asyncio.run(scenario())
+    ended = result["ended"]
+    assert ended["report_status"] == "ready", ended
+    assert ended["summary"][1] == "Criteria met: 1/2"
+    report_path = Path(ended["report_path"])
+    assert report_path == history.run_dir(run_id) / "report.md"
+    text = report_path.read_text(encoding="utf-8")
+    assert result["finding"]["finding_id"] in text
+    shot = next(a for a in history.list_artifacts(run_id) if a.id == result["shot"]["artifact_id"])
+    assert shot.sha256 == result["shot"]["sha256"]
+    assert f"]({shot.relative_path})" in text
+    assert shot.sha256 in text
+    assert history.get_run(run_id).status == RunStatus.COMPLETED
+    assert verify_artifacts(history.run_dir(run_id), history.list_artifacts(run_id)).valid
+    tools = [
+        event.tool_name
+        for event in history.list_events(run_id)
+        if event.event_type == EventType.TOOL_CALL
+    ]
+    assert tools[-3:] == ["report_finding", "record_criterion_result", "end_run"]
+
+
+def test_report_failure_keeps_terminal_state(
+    history_context: ProjectContext, monkeypatch: Any
+) -> None:
+    from jinja2 import DictLoader
+
+    from lastro.browser import tools
+    from lastro.reporting.builder import ReportBuilder
+
+    broken = DictLoader({"report.md.j2": "{% for x in %}", "issue.md.j2": ""})
+    monkeypatch.setattr(
+        tools, "ReportBuilder", lambda history: ReportBuilder(history, loader=broken)
+    )
+    history, run_id, runtime = started(history_context)
+    call(runtime, "submit_mission_plan", PLAN)
+
+    ended = call(runtime, "end_run", {"outcome": "completed", "reason": "done"})
+
+    assert ended["status"] == "completed"
+    assert ended["report_status"] == "fallback"
+    assert ended["report_path"].endswith("report.json")
+    assert "TemplateSyntaxError" in ended["report_error"]
+    assert history.get_run(run_id).status == RunStatus.COMPLETED
+    assert history.list_events(run_id)[-1].event_type == EventType.RUN_ENDED
