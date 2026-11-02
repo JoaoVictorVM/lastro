@@ -1,7 +1,11 @@
 """Ferramentas semânticas com validação de run, política e auditoria."""
 
+import asyncio
+import contextlib
 import json
 import uuid
+from collections.abc import Callable
+from datetime import datetime
 from typing import Any, Literal, cast
 from urllib.parse import urljoin, urlsplit
 
@@ -19,6 +23,8 @@ from lastro.history import ArtifactType, EventType, HistoryStore, RunStatus
 from lastro.history.redaction import preview, redact_text
 from lastro.history.runs import config_snapshot
 from lastro.oracles.models import OracleSignal
+from lastro.testdata import TestDataRequest, generate, parse_request, reference_date
+from lastro.timeutil import utc_now
 
 NO_RUN = "No active run. Start one with 'lastro run start'."
 TOOLS = (
@@ -127,8 +133,15 @@ def locate(page: Page, target: Target) -> Locator:
 
 
 class BrowserTools:
-    def __init__(self, project: ProjectContext, history: HistoryStore, run_id: str) -> None:
+    def __init__(
+        self,
+        project: ProjectContext,
+        history: HistoryStore,
+        run_id: str,
+        clock: Callable[[], datetime] = utc_now,
+    ) -> None:
         self.project, self.history, self.run_id = project, history, run_id
+        self.clock = clock
         self.snapshot = config_snapshot(project)
         self.session = BrowserSession(project, history, run_id, self.active)
         self.provenance = self.session.provenance
@@ -149,6 +162,19 @@ class BrowserTools:
             action_id = uuid.uuid4().hex
             recorded = False
             try:
+                if name == "generate_test_data":
+                    request = parse_request(raw)
+                    self.session.action_sequence = record_call(
+                        self.history,
+                        self.run_id,
+                        action_id,
+                        name,
+                        raw,
+                        Decision("allow", "metadata", ""),
+                    )
+                    recorded = True
+                    self.active()
+                    return self.test_data(request, action_id)
                 args = Arguments.model_validate(raw)
                 if name not in TOOLS:
                     raise ValueError("Unknown tool")
@@ -303,19 +329,40 @@ class BrowserTools:
                 self.session.expected = ExpectedRequest(binding, expected_url, values, action_id)
                 self.session.network_denial = None
                 self.session.mark_action(page, action_id)
+                expected = self.session.expected
                 await locator.click()
                 if self.session.network_denial:
                     raise ValueError("DENIED at network layer: " + self.session.network_denial)
-                if not self.session.expected.used:
+                if not expected.used:
                     raise ValueError("Expected request was not observed")
+                if binding.operation == "create":
+                    # A criação só é rastreada quando a resposta chega; esperar evita que a próxima
+                    # ação use um registro ainda sem proveniência.
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(expected.completed.wait(), args.timeout_ms / 1000)
+                if self.session.tenant_mismatch:
+                    raise ValueError(self.session.tenant_mismatch)
             return {"status": "ok"}
 
         return execute_action, decision
 
+    def test_data(self, request: TestDataRequest, action_id: str) -> dict[str, Any]:
+        calls = [
+            event.correlation_id
+            for event in self.history.list_events(self.run_id)
+            if event.event_type == EventType.TOOL_CALL and event.tool_name == "generate_test_data"
+        ]
+        result = generate(
+            request,
+            run_id=self.run_id,
+            generation_index=calls.index(action_id) + 1,
+            reference_date=reference_date(self.clock(), self.project.timezone),
+        )
+        return result.model_dump()
+
     async def execute(self, name: str, args: Arguments, action_id: str) -> dict[str, Any]:
         if name in {
             "ask_clarification",
-            "generate_test_data",
             "knowledge_query",
             "knowledge_propose",
         }:

@@ -176,7 +176,7 @@ def test_ready_message_reflects_active_defects(
 
 def test_not_ready_reports_server_log(state_dir: Path) -> None:
     with pytest.raises(runner.DemoNotReadyError) as info:
-        runner.start(state_dir=state_dir, port=free_port(), ready_timeout=0.01)
+        runner.start(state_dir=state_dir, port=free_port(), ready_timeout=0)
 
     assert str(state_dir / "server.log") in str(info.value)
     assert not (state_dir / "server.json").exists()

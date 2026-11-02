@@ -72,7 +72,17 @@ def test_require_project_runs_command_with_valid_config(
     assert executed == ["homolog"]
 
 
-ALL_COMMANDS = ["init", "doctor", "demo", "run", "tail", "history", "backup", *STUB_COMMANDS]
+ALL_COMMANDS = [
+    "init",
+    "doctor",
+    "demo",
+    "run",
+    "tail",
+    "history",
+    "backup",
+    "data",
+    *STUB_COMMANDS,
+]
 # Typer forces colored help when GITHUB_ACTIONS is set, so CI output carries ANSI escapes.
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 

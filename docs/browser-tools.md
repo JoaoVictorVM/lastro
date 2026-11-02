@@ -46,13 +46,14 @@ The entity must also appear in `allowed_entities`, and every business field in
 business tools. `field_values` restricts mapped HTML fields to literal allowed values, for
 example `field_values = {status = ["active"]}` to prevent deactivation through a select.
 The package's `lastro.browser.demo.demo_policy()` provides demo form bindings; it does not
-authorize seed records or claim creation proof from the demo's HTML-only create response.
+authorize seed records. Its create binding reads the new employee id from the demo's
+same-origin `Location` header, and `demo_test_data()` adds the detail link and cleanup text.
 
 Edits require a record created by a matched action in the current run or an exact human
 preauthorization tuple. Unknown origins return `require_approval` without executing or
 queuing the action. A creation binding may identify its result using `response_id` (a JSON
-key path) or `location_id` (the final segment of a same-origin Location header). Without
-an unambiguous result, subsequent edits still require approval.
+key path) or `location_id` (the final segment of a same-origin Location header), never
+both. Without an unambiguous result, subsequent edits still require approval.
 
 Rules use ordered first-match evaluation after mandatory safety checks. Match properties
 are `operations`, `entities`, `fields`, `record_origins` and `methods`, with nonempty lists.
@@ -128,6 +129,67 @@ first and last occurrence metadata and the last event ID, even after the run end
 the durable input for a future report section. Report generation and findings tagged
 `source: oracle` are not implemented by the collector; signals do not create findings.
 
+## Test data and created records
+
+`generate_test_data` returns fictional Brazilian values without opening the browser or
+contacting the target. It is audited like every tool and requires a running run. Use exactly
+one mode:
+
+- `{"entity": "employee"}` returns `name`, `cpf`, `email`, `phone` and `hire_date`, with
+  `variant` `valid` (default) or `invalid_cpf`.
+- `{"type": "..."}` returns one `value` for `name`, `cpf` (`valid` or `invalid`), `email`,
+  `phone`, `date` (`past`, `today`, `future` or `boundary`) or `text` (`length` from 1 to
+  500). A `boundary` date takes `boundary_date` (ISO) and `offset_days` of -1, 0 or 1.
+
+Names start with `LASTRO-<last 4 characters of the run id>-` and emails use
+`lastro+<run id>@example.com`, so test records are recognizable in the target system.
+Valid CPFs have correct check digits; invalid ones keep the shape and break a check digit.
+Phones use the `(DD) 9XXXX-XXXX` format and employee hire dates fall within the past year.
+Dates use the project timezone. Responses include `generation_index` (the position of the
+call among the run's `generate_test_data` calls) and `reference_date`; the same run, index
+and request reproduce the same values. Choice fields such as role and status still come from
+the page or from the binding's `field_values`. Unsupported types return
+`Unsupported test data type '<type>'. Supported: name, cpf, email, phone, date, text.`
+
+Every 2xx response to a POST matched to a `create` binding is stored as a created record,
+together with a `record_created` event in the same transaction. The identifier comes only
+from the configured `response_id` or `location_id`; Lastro never reads it from the page or
+from the agent. When extraction fails, the record is stored as `unknown` with the warning
+`identifier_not_extracted`, and it never counts as created in the run for later edits.
+A 2xx status other than `success_status` is tracked with `unexpected_success_status`.
+Redelivery of the same action's response is idempotent.
+
+Set `response_tenant` (a JSON key path) on the request binding when the create response
+exposes the tenant. A different tenant is recorded as observed, engages the write lock and
+blocks the run with `Record created in unexpected tenant '<x>'. Writes stopped; verify and
+clean up manually.`
+
+Per-entity settings add a detail link and the manual cleanup procedure:
+
+```toml
+[profiles.staging.test_data.entities.employee]
+detail_path = "/employees/{id}"
+cleanup_instructions = "Remove the employee from its detail page."
+cleanup_required = true
+```
+
+The entity must be in `allowed_entities` and have a `create` binding. `detail_path` is a
+same-origin path with exactly one `{id}` segment; queries, fragments and other placeholders
+are rejected. Records start `pending`, or `not_required` when `cleanup_required = false`.
+
+`lastro data pending [--profile NAME]` lists pending records, oldest first, with their
+tracking id, run, profile, tenant, entity, system id, creation time, detail URL and cleanup
+procedure. `lastro data mark-cleaned <tracking-id>` records that a person cleaned the record
+up outside Lastro, setting `cleaned_manually` and the timestamp; repeating it is harmless and
+`not_required` records cannot be marked. Lastro never deletes, deactivates or changes
+records in the target system, and these commands make no network request.
+
+`HistoryStore.list_created_records(run_id=...)` returns the typed list (entity, system id,
+tenant, run, creation time, cleanup status, detail URL, instructions and warnings) for a
+future report section. `unidentified_warning(run_id, records)` builds the aggregated
+message `N created record(s) could not be identified automatically; check the target system
+for names starting with LASTRO-<id>.` The report itself is not implemented yet.
+
 ## Executor configuration and current boundaries
 
 `lastro init` preserves existing files and generates `.mcp.json` plus Claude Code settings.
@@ -138,8 +200,8 @@ for secrets and symlinks. Install the package so both `lastro-browser` and
 `lastro-permission-hook` are available on PATH. Existing settings need manual reconciliation;
 init does not overwrite them. These settings are executor controls, not OS isolation.
 
-Human clarification, approval execution, generated test data and knowledge tools report
-unavailability until their services are integrated. Page markers and deterministic guards
+Human clarification, approval execution and knowledge tools report unavailability until
+their services are integrated. Page markers and deterministic guards
 are tested with Chromium. End-to-end agent behavior for prompt injection and actual
 executor permission denials remain separate acceptance checks; model-written statements
 about denied tools are not accepted as evidence.

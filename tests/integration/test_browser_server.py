@@ -117,14 +117,26 @@ def test_human_control_rejects_unauthenticated_requests(
 
 
 def test_creation_proof_is_durable_and_idempotent(make_auth_project: Callable[..., Any]) -> None:
+    from lastro.browser.events import record_call
+    from lastro.browser.policy import Decision
     from lastro.browser.provenance import Provenance
+    from lastro.history import CreatedRecordInput
 
     project = make_auth_project().context()
     history = open_history(project)
     run = history.create_run(project, TextMission("create"))
+    record_call(history, run.record.id, "create-action", "submit", {}, Decision("allow", "", ""))
     provenance = Provenance(history, run.record.id, project.profile)
-    provenance.record("employee", "new-1", "create-action")
-    provenance.record("employee", "new-1", "create-action")
+    data = CreatedRecordInput(
+        run_id=run.record.id,
+        action_id="create-action",
+        entity="employee",
+        system_identifier="new-1",
+        tenant="aurora",
+        expected_tenant="aurora",
+    )
+    first = provenance.record(data)
+    assert provenance.record(data) == first
     restored = Provenance(history, run.record.id, project.profile)
     assert restored.origin("employee", "new-1") == "created_in_run"
-    assert len(restored.actions) == 1
+    assert len(history.list_created_records(run_id=run.record.id)) == 1

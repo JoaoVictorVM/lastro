@@ -7,7 +7,6 @@ from lastro.cli import output
 STUB_COMMANDS: dict[str, str] = {
     "approve": "Aprova ou recusa ações pendentes de uma run.",
     "report": "Gera e verifica relatórios de runs.",
-    "data": "Gerencia os dados privados do projeto.",
     "knowledge": "Gerencia a base de conhecimento do sistema alvo.",
     "eval": "Executa avaliações do agente.",
 }

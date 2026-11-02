@@ -72,3 +72,13 @@ class DiskFullError(HistoryError):
 
 class BackupError(HistoryError):
     pass
+
+
+class CreatedRecordNotFoundError(HistoryError):
+    def __init__(self, tracking_id: str) -> None:
+        super().__init__(f"registro criado não encontrado neste projeto: {tracking_id}")
+        self.tracking_id = tracking_id
+
+
+class CleanupTransitionError(HistoryError):
+    pass

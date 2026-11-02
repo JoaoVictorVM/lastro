@@ -76,6 +76,13 @@ bindings = []
 rules = []
 preauthorized_records = []
 
+# Registros criados pelas runs: link de detalhe e limpeza manual por entidade. A entidade
+# precisa estar em allowed_entities e ter um binding create. O Lastro nunca exclui registros.
+# [profiles.${profile_name}.test_data.entities.employee]
+# detail_path = "/employees/{id}"
+# cleanup_instructions = "Remova o funcionário pela tela de detalhe."
+# cleanup_required = true
+
 # Ruídos conhecidos: glob completo e sensível a maiúsculas (* e ?).
 [profiles.${profile_name}.oracles]
 ignore = []

@@ -1,7 +1,8 @@
 """Vínculo entre rota, formulário e a requisição única autorizada."""
 
+import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 from urllib.parse import parse_qsl, urlsplit
 
@@ -61,6 +62,7 @@ class ExpectedRequest:
     values: dict[str, str]
     action_id: str
     used: bool = False
+    completed: asyncio.Event = field(default_factory=asyncio.Event)
 
     def consume(self, method: str, url: str, body: str | None) -> bool:
         request = self.binding.request

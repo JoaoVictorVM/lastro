@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
+from urllib.parse import urljoin
 
 MAX_MISSION_TEXT_LENGTH = 10_000
 MAX_PREVIEW_LENGTH = 200
@@ -81,6 +82,15 @@ class PolicyDecision(StrEnum):
     ALLOW = "allow"
     DENY = "deny"
     REQUIRE_APPROVAL = "require_approval"
+
+
+class CleanupStatus(StrEnum):
+    PENDING = "pending"
+    CLEANED_MANUALLY = "cleaned_manually"
+    NOT_REQUIRED = "not_required"
+
+
+UNKNOWN_IDENTIFIER = "unknown"
 
 
 class MissionSource(StrEnum):
@@ -213,3 +223,64 @@ class RunSummary:
     flows: tuple[str, ...] = ()
     findings: FindingCounts = field(default_factory=FindingCounts)
     pending_cleanup: int = 0
+
+
+@dataclass(frozen=True)
+class CreatedRecordInput:
+    """Criação confirmada pela resposta real do alvo; nunca informada pelo modelo."""
+
+    run_id: str
+    action_id: str
+    entity: str
+    system_identifier: str | None
+    tenant: str
+    expected_tenant: str
+    cleanup_required: bool = True
+    detail_path: str | None = None
+    cleanup_instructions: str | None = None
+    unexpected_success_status: int | None = None
+
+
+@dataclass(frozen=True)
+class CreatedRecord:
+    id: str
+    run_id: str
+    profile: str
+    environment_url: str
+    entity_type: str
+    system_identifier: str
+    tenant: str
+    cleanup_status: CleanupStatus
+    created_at: str
+    cleaned_at: str | None
+    action_id: str | None
+    identified: bool
+    expected_tenant: str | None
+    detail_path: str | None
+    cleanup_instructions: str | None
+    warnings: tuple[str, ...]
+    unexpected_success_status: int | None
+
+    @property
+    def detail_url(self) -> str | None:
+        if self.detail_path is None:
+            return None
+        return urljoin(self.environment_url, self.detail_path)
+
+
+@dataclass(frozen=True)
+class CleanupResult:
+    record: CreatedRecord
+    changed: bool
+
+
+def unidentified_warning(run_id: str, records: list[CreatedRecord]) -> str | None:
+    """Alerta agregado dos registros sem id, no texto em inglês definido para o relatório."""
+    count = sum(1 for record in records if not record.identified)
+    if count == 0:
+        return None
+    noun = "record" if count == 1 else "records"
+    return (
+        f"{count} created {noun} could not be identified automatically; "
+        f"check the target system for names starting with LASTRO-{run_id[-4:]}."
+    )

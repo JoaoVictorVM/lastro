@@ -11,7 +11,11 @@ from types import ModuleType
 
 from lastro.history.database import Database
 from lastro.history.errors import MigrationError
-from lastro.history.migrations import v001_initial, v002_oracle_signals
+from lastro.history.migrations import (
+    v001_initial,
+    v002_oracle_signals,
+    v003_created_record_actions,
+)
 from lastro.timeutil import utc_now_iso
 
 _BOOTSTRAP = """
@@ -43,6 +47,7 @@ class Migration:
 MIGRATIONS: tuple[Migration, ...] = (
     Migration.from_module(v001_initial),
     Migration.from_module(v002_oracle_signals),
+    Migration.from_module(v003_created_record_actions),
 )
 
 

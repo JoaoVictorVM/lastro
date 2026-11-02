@@ -22,6 +22,12 @@ from lastro.history.artifacts import (
     store_file,
 )
 from lastro.history.backup import BackupResult, create_backup
+from lastro.history.created_records import (
+    creation_event,
+    insert_created_record,
+    mark_cleaned,
+    select_created_records,
+)
 from lastro.history.database import Database, RetryPolicy, db_timestamp
 from lastro.history.errors import (
     ActiveRunExistsError,
@@ -46,6 +52,10 @@ from lastro.history.models import (
     PROCESS_LOST_REASON,
     ArtifactRecord,
     ArtifactType,
+    CleanupResult,
+    CleanupStatus,
+    CreatedRecord,
+    CreatedRecordInput,
     CreatedRun,
     EventRecord,
     EventType,
@@ -379,6 +389,44 @@ class HistoryStore:
             event = prepare_event(EventType.ORACLE_SIGNAL, payload={"operation": "list"})
             self._fail_closed(run_id, event, self._now())
             raise
+
+    def record_created(self, data: CreatedRecordInput) -> CreatedRecord:
+        """Confirma registro e record_created na mesma transação, ou nenhum dos dois."""
+        if data.run_id in self._failed_closed:
+            raise HistoryUnavailableError()
+        timestamp = self._now()
+        try:
+            return self._database.write(
+                lambda conn: insert_created_record(conn, self.project_id, data, timestamp)
+            )
+        except HistoryUnavailableError:
+            self._fail_closed(data.run_id, creation_event(data), timestamp)
+            raise
+
+    def list_created_records(
+        self,
+        *,
+        run_id: str | None = None,
+        cleanup_status: CleanupStatus | None = None,
+        profile: str | None = None,
+    ) -> list[CreatedRecord]:
+        """Registros do projeto em ordem de criação, contrato de leitura do relatório."""
+        return self._database.read(
+            lambda conn: select_created_records(
+                conn,
+                self.project_id,
+                run_id=run_id,
+                cleanup_status=cleanup_status,
+                profile=profile,
+            )
+        )
+
+    def mark_created_record_cleaned(self, tracking_id: str) -> CleanupResult:
+        """Registra a limpeza manual feita fora do Lastro; nada é enviado ao sistema alvo."""
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: mark_cleaned(conn, self.project_id, tracking_id, timestamp)
+        )
 
     def register_artifact(
         self,
