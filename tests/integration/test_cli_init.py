@@ -243,3 +243,60 @@ def test_new_projects_get_distinct_canonical_project_ids(
         ids.append(project_id)
 
     assert ids[0] != ids[1]
+
+
+def test_init_generates_claude_under_sixty_lines_and_skill_refs(
+    runner: CliRunner, workdir: Path
+) -> None:
+    from lastro.mission import instruction_problems, instruction_references, verify_bundle
+
+    result = runner.invoke(app, FLAGS)
+
+    assert result.exit_code == 0, result.output
+    claude = workdir / "CLAUDE.md"
+    text = claude.read_text(encoding="utf-8")
+    assert len(text.splitlines()) <= 60
+    for reference in instruction_references():
+        assert reference in text
+    assert "mission_context" in text
+    assert instruction_problems(claude) == []
+    assert len(verify_bundle(workdir).sha256) == 64
+    assert "Criado: skills/lastro/manifest.json" in result.stdout
+
+
+def test_init_preserves_modified_instruction_files(runner: CliRunner, workdir: Path) -> None:
+    (workdir / "CLAUDE.md").write_text("# Minhas regras\n", encoding="utf-8")
+    explore = workdir / "skills" / "lastro" / "explore.md"
+    explore.parent.mkdir(parents=True)
+    explore.write_text("# Minha versão\n", encoding="utf-8")
+
+    result = runner.invoke(app, FLAGS)
+
+    assert result.exit_code == 1
+    assert (workdir / "CLAUDE.md").read_text(encoding="utf-8") == "# Minhas regras\n"
+    assert explore.read_text(encoding="utf-8") == "# Minha versão\n"
+    assert "CLAUDE.md não referencia skills/lastro/explore.md" in result.stderr
+    assert "skills/lastro/explore.md foi modificado localmente" in result.stderr
+    assert "git diff --no-index" in result.stderr
+
+
+def test_init_updates_unmodified_previous_bundle_version(
+    runner: CliRunner, workdir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    from lastro.mission import bundle as bundle_module
+
+    old = b"# Lastro explore skill\n\nprevious release\n"
+    explore = workdir / "skills" / "lastro" / "explore.md"
+    explore.parent.mkdir(parents=True)
+    explore.write_bytes(old)
+    monkeypatch.setitem(
+        bundle_module.PREVIOUS_SHA256, "explore.md", frozenset({hashlib.sha256(old).hexdigest()})
+    )
+
+    result = runner.invoke(app, FLAGS)
+
+    assert result.exit_code == 0, result.output
+    assert "Atualizado: skills/lastro/explore.md" in result.stdout
+    assert bundle_module.verify_bundle(workdir).sha256
