@@ -1,6 +1,7 @@
 import os
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ from typer.testing import CliRunner
 
 from lastro.config.loader import ProjectContext, load_project
 from lastro.doctor.checks import DoctorEnvironment
+from lastro.mission import bundle_files
 from lastro.paths import is_inside_git_tree
 
 
@@ -110,7 +112,18 @@ def healthy_project(
     )
     (workdir / PERMISSION_FILE).parent.mkdir()
     (workdir / PERMISSION_FILE).write_text("{}", encoding="utf-8")
+    materialize_bundle(workdir)
     return workdir
+
+
+def materialize_bundle(project_dir: Path) -> None:
+    """Bundle de skills e instruções do executor como o lastro init os gera."""
+    for relative, content in bundle_files().items():
+        target = project_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8", newline="\n")
+    template = files("lastro.scaffold").joinpath("templates", "CLAUDE.md.tmpl")
+    (project_dir / "CLAUDE.md").write_bytes(template.read_bytes())
 
 
 PROJECT_ID = "3f0c9a52-6b1e-4d8e-9a77-2a4f1c0d5e61"
@@ -129,6 +142,7 @@ def history_context_for(
         + profile_toml("homolog", extra=RUN_LIMITS)
         + profile_toml("local")
     )
+    materialize_bundle(workdir)
 
     def context(profile: str) -> ProjectContext:
         return load_project(config_path, profile, cwd=workdir)

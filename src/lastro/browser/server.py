@@ -9,7 +9,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from lastro.browser.control import HumanControl
-from lastro.browser.tools import NO_RUN, TOOLS, Arguments, BrowserTools
+from lastro.browser.tools import INPUT_MODELS, NO_RUN, TOOLS, Arguments, BrowserTools
 from lastro.config.loader import load_project
 from lastro.history import open_history
 from lastro.testdata import TestDataRequest
@@ -30,7 +30,7 @@ async def serve(profile: str | None = None) -> None:
                 description="Run-scoped Lastro tool: " + name,
                 inputSchema=TestDataRequest.model_json_schema()
                 if name == "generate_test_data"
-                else Arguments.model_json_schema(),
+                else INPUT_MODELS.get(name, Arguments).model_json_schema(),
             )
             for name in TOOLS
         ]

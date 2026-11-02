@@ -109,6 +109,14 @@ There is no restore command and a restore never merges with existing history. To
 3. Point `private_data_root` in a `lastro.toml` with the same `project_id` to that folder and run `lastro history list`. The output matches the history at backup time.
 4. To make the restored copy the project history, stop Lastro, move the current `<private data root>/<project_id>` folder aside and move the restored `<project_id>` folder into its place.
 
+## Missions and QA skills
+
+A mission is free text (`--mission`, up to 10,000 characters) or a Markdown file (`--mission-file`, same limit). `lastro init` writes `missions/example.md` with the optional sections `Objetivo`, `Escopo`, `Critérios`, `Fora de escopo` and `Observações`; the English headings `Objective`, `Scope`, `Criteria`, `Out of scope` and `Notes` are accepted too.
+
+`lastro init` also materializes an executor-neutral skill bundle in `skills/lastro/` (`explore.md`, `qa-heuristics.md`, `reproduce.md` and `manifest.json`) and a short `CLAUDE.md` that points to it. Existing files are preserved; a locally modified skill is reported with the command to compare it. `lastro run start` refuses to start when the bundle does not match its manifest or `CLAUDE.md` does not reference it, and records the bundle content hash in the run. `lastro doctor` runs the same checks and also flags a `CLAUDE.md` longer than 60 lines.
+
+The agent interprets the mission; Lastro validates and stores the result. The agent reads the durable mission with `mission_context` and submits objectives, scope, explicit criteria, gaps, out-of-scope items and a charter with `submit_mission_plan`. Lastro builds the canonical charter `Explore <target> with <resources> to discover <information>`, with a 20 minute default time box capped by the run limit. Browser tools stay denied until a plan exists and while it has a blocking gap. Each applied heuristic is recorded with `record_test_check`, linked to real action ids of the run. See [docs/browser-tools.md](docs/browser-tools.md#mission-preparation) for the contracts.
+
 ## Roadmap
 
 Each release adds one capability and ends with a measurable result.

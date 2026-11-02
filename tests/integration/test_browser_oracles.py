@@ -38,20 +38,24 @@ def test_demo_email_500_links_submit_action(make_auth_project: Callable[..., Any
 
     async def scenario() -> None:
         try:
-            assert await runtime.call(
-                "navigate", {"url": runtime.project.profile.target_url + "/employees"}
-            ) == {"status": "ok"}
+            assert (
+                await runtime.call(
+                    "navigate", {"url": runtime.project.profile.target_url + "/employees"}
+                )
+            )["status"] == "ok"
             page = cast(Page, runtime.session.page)
             row = page.locator("tr").filter(has_text="Ana Beatriz Moreira")
             href = await row.get_by_role("link", name="Editar", exact=True).get_attribute("href")
             assert href
             await runtime.call("navigate", {"url": runtime.project.profile.target_url + href})
-            assert await runtime.call(
-                "fill", {"target": {"label": "E-mail"}, "value": "qa@example.com"}
-            ) == {"status": "ok"}
-            assert await runtime.call(
-                "submit", {"target": {"role": "button", "name": "Salvar"}}
-            ) == {"status": "ok"}
+            assert (
+                await runtime.call(
+                    "fill", {"target": {"label": "E-mail"}, "value": "qa@example.com"}
+                )
+            )["status"] == "ok"
+            assert (await runtime.call("submit", {"target": {"role": "button", "name": "Salvar"}}))[
+                "status"
+            ] == "ok"
             await runtime.session.oracles.drain()
             signals = runtime.history.list_oracle_signals(runtime.run_id)
             signal = next(s for s in signals if s.signal_type == "http_5xx")
@@ -207,7 +211,7 @@ def test_shutdown_drains_and_recovery_does_not_duplicate_listeners(
             page = cast(Page, runtime.session.page)
             await page.evaluate("console.error('after recovery')")
             runtime.session.oracles.capture("console", page=page, url=None, text="on shutdown")
-            assert await runtime.call("end_run", {}) == {"status": "completed"}
+            assert (await runtime.call("end_run", {}))["status"] == "completed"
             signals = runtime.history.list_oracle_signals(runtime.run_id)
             recovered = next(s for s in signals if s.message == "after recovery")
             assert recovered.occurrence_count == 1

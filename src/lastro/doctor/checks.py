@@ -1,4 +1,4 @@
-"""Os 12 checks do lastro doctor. Cada check devolve um resultado tipado com frase de correção."""
+"""Os 13 checks do lastro doctor. Cada check devolve um resultado tipado com frase de correção."""
 
 import importlib.util
 import os
@@ -16,6 +16,7 @@ from lastro.cli.output import Status
 from lastro.config.loader import ENV_FILENAME, LoadedConfig
 from lastro.config.schema import DEFAULT_EXECUTOR, Profile
 from lastro.executors import get_executor, supported_executors
+from lastro.mission import BundleError, instruction_problems, verify_bundle
 from lastro.paths import ensure_writable, is_inside_git_tree
 
 MIN_PYTHON = (3, 12)
@@ -35,6 +36,7 @@ NAME_ENV_IGNORED = ".env ignorado pelo Git"
 NAME_TARGET = "URL alvo acessível"
 NAME_VERSION_ENDPOINT = "Version endpoint acessível"
 NAME_PERMISSION = "Permissão do executor"
+NAME_SKILL_BUNDLE = "Bundle de skills"
 
 DEPENDS_ON_CONFIG_DETAIL = "depende de configuração válida"
 DEPENDS_ON_CONFIG_FIX = "Corrija a configuração apontada no check Configuração e rode de novo."
@@ -368,3 +370,24 @@ def check_permission_file(project_dir: Path, executor: str) -> CheckResult:
         f"{spec.permission_file.as_posix()} ausente",
         "Rode lastro init no diretório do projeto para criar a permissão do executor.",
     )
+
+
+def check_skill_bundle(project_dir: Path, executor: str) -> CheckResult:
+    """Manifest, hashes e instruções do executor que a run exige antes de iniciar."""
+    fix = "Rode lastro init no diretório do projeto; arquivos modificados são preservados."
+    try:
+        bundle = verify_bundle(project_dir)
+    except BundleError as exc:
+        return _fail(13, NAME_SKILL_BUNDLE, exc.detail, fix)
+    spec = get_executor(executor)
+    if spec is None:
+        return _ok(13, NAME_SKILL_BUNDLE, f"sha256 {bundle.sha256[:12]}")
+    problems = instruction_problems(project_dir / spec.instruction_file)
+    if problems:
+        return _fail(
+            13,
+            NAME_SKILL_BUNDLE,
+            "; ".join(problems),
+            f"Aponte {spec.instruction_file.as_posix()} para skills/lastro/ em até 60 linhas.",
+        )
+    return _ok(13, NAME_SKILL_BUNDLE, f"sha256 {bundle.sha256[:12]}")

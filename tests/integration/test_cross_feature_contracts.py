@@ -183,3 +183,62 @@ def test_public_api_exposes_no_sqlite_connection_or_secret_fields(
     snapshot = json.dumps(created.record.config_snapshot)
     assert "credentials" not in snapshot
     assert "PASSWORD" not in snapshot
+
+
+def test_f03_mission_is_parsed_and_stored_for_active_run(
+    history_context: ProjectContext, workdir: Path
+) -> None:
+    import asyncio
+
+    from typer.testing import CliRunner
+
+    from lastro.browser.tools import BrowserTools
+    from lastro.cli.app import app
+    from lastro.mission import verify_bundle
+
+    template = (workdir.parent / "template.md").resolve()
+    template.write_bytes(
+        "# Objetivo\nValidar o cadastro\n\n# Critérios\n- O telefone persiste\n".encode()
+    )
+    started = CliRunner().invoke(
+        app, ["--profile", "homolog", "run", "start", "--mission-file", str(template)]
+    )
+    assert started.exit_code == 0, started.output
+    store = open_history(history_context)
+    run = store.get_active_run()
+    assert run is not None
+    runtime = BrowserTools(history_context, store, run.id)
+
+    context = asyncio.run(runtime.call("mission_context", {}))
+    assert "O telefone persiste" in context["content"]
+    assert context["content_sha256"] == run.mission_file_sha256
+    assert context["skill_bundle_sha256"] == verify_bundle(workdir).sha256
+    plan = asyncio.run(
+        runtime.call(
+            "submit_mission_plan",
+            {
+                "objectives": ["Validar o cadastro"],
+                "scope": [],
+                "criteria": [{"text": "O telefone persiste", "source": "mission_explicit"}],
+                "gaps": [],
+                "out_of_scope": [],
+                "charter": {
+                    "target": "employee registration",
+                    "resources": ["demo"],
+                    "information": "persistence defects",
+                    "heuristics": ["persistence_after_reload"],
+                },
+            },
+        )
+    )
+
+    stored = store.get_active_mission_plan(run.id)
+    assert stored is not None and stored.id == plan["plan_id"]
+    assert stored.run_id == run.id
+    assert [criterion.text for criterion in stored.criteria] == ["O telefone persiste"]
+    assert store.get_run(run.id).mission_snapshot_path == "mission/source.md"
+
+
+@pytest.mark.skip(reason="aguarda o relatório gerado a partir do histórico da run")
+def test_report_includes_active_mission_plan_and_charter() -> None:
+    raise AssertionError("contrato reservado")

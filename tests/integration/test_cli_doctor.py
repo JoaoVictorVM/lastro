@@ -21,7 +21,7 @@ def _check_lines(output: str, prefixes: tuple[str, ...] = UNICODE_PREFIXES) -> l
     return [line for line in output.splitlines() if line.startswith(prefixes)]
 
 
-def test_doctor_runs_all_12_checks(
+def test_doctor_runs_all_13_checks(
     runner: CliRunner,
     healthy_project: Path,
     doctor_env: Callable[..., DoctorEnvironment],
@@ -32,7 +32,7 @@ def test_doctor_runs_all_12_checks(
     result = runner.invoke(app, ["doctor"])
 
     lines = _check_lines(result.stdout)
-    assert len(lines) == 12, result.stdout
+    assert len(lines) == 13, result.stdout
 
 
 def test_exit_code_0_all_pass(
@@ -111,7 +111,7 @@ def test_ascii_fallback_icons(
 
     assert result.exit_code == 1
     lines = _check_lines(result.stdout, ASCII_PREFIXES)
-    assert len(lines) == 12
+    assert len(lines) == 13
     assert "[WARN] uv: " in result.stdout
     assert not any(icon in result.stdout for icon in UNICODE_ICONS.values())
 
@@ -130,7 +130,7 @@ def test_invalid_config_reported_and_dependents_fail(
     assert result.exit_code == 2
     assert "lastro.toml › profiles: expected table of profiles, got integer" in result.stdout
     assert result.stdout.count("depende de configuração válida") == 4
-    assert len(_check_lines(result.stdout)) == 12
+    assert len(_check_lines(result.stdout)) == 13
 
 
 def test_multiple_profiles_one_line_each_for_network_checks(
@@ -150,12 +150,36 @@ def test_multiple_profiles_one_line_each_for_network_checks(
     result = runner.invoke(app, ["doctor"])
 
     lines = _check_lines(result.stdout)
-    assert len(lines) == 14
+    assert len(lines) == 15
     for profile in ("homolog", "local"):
         assert sum(f"URL alvo acessível [{profile}]" in line for line in lines) == 1
         assert sum(f"Version endpoint acessível [{profile}]" in line for line in lines) == 1
 
     selected = runner.invoke(app, ["--profile", "local", "doctor"])
     selected_lines = _check_lines(selected.stdout)
-    assert len(selected_lines) == 12
+    assert len(selected_lines) == 13
     assert not any("[homolog]" in line for line in selected_lines)
+
+
+def test_doctor_diagnoses_bundle_and_instructions(
+    runner: CliRunner,
+    healthy_project: Path,
+    doctor_env: Callable[..., DoctorEnvironment],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_env(monkeypatch, doctor_env())
+    healthy = runner.invoke(app, ["doctor"])
+    assert "✓ Bundle de skills: sha256 " in healthy.stdout
+
+    claude = healthy_project / "CLAUDE.md"
+    claude.write_text(claude.read_text(encoding="utf-8") + "linha\n" * 60, encoding="utf-8")
+    long = runner.invoke(app, ["doctor"])
+    assert long.exit_code == 2
+    assert "CLAUDE.md excede 60 linhas" in long.stdout
+
+    claude.write_text("# Regras locais\n", encoding="utf-8")
+    (healthy_project / "skills" / "lastro" / "reproduce.md").write_text("x", encoding="utf-8")
+    broken = runner.invoke(app, ["doctor"])
+    assert broken.exit_code == 2
+    assert "skills/lastro/reproduce.md difere do manifest" in broken.stdout
+    assert "Rode lastro init" in broken.stdout

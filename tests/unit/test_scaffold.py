@@ -2,9 +2,11 @@ import json
 from pathlib import Path
 
 from lastro.config.loader import load_config
+from lastro.mission import bundle_files
 from lastro.scaffold.files import (
     CONFIG_FILE,
     ENV_EXAMPLE_FILE,
+    MISSION_EXAMPLE,
     MISSIONS_MARKER,
     InitAnswers,
     ProjectIdMigration,
@@ -52,7 +54,10 @@ def test_no_secret_values_written(tmp_path: Path) -> None:
         ENV_EXAMPLE_FILE,
         PERMISSION_FILE,
         MISSIONS_MARKER,
+        MISSION_EXAMPLE,
+        Path("CLAUDE.md"),
         Path(".mcp.json"),
+        *bundle_files(),
     }
     assert not (tmp_path / ".env").exists()
     env_example = (tmp_path / ENV_EXAMPLE_FILE).read_text(encoding="utf-8")
@@ -83,13 +88,17 @@ def test_existing_files_not_overwritten(tmp_path: Path) -> None:
     assert ENV_EXAMPLE_FILE in result.created
 
 
-def test_missions_folder_created_empty(tmp_path: Path) -> None:
+def test_missions_folder_has_marker_and_example(tmp_path: Path) -> None:
     write_scaffold(tmp_path, ANSWERS)
 
     missions = tmp_path / "missions"
     assert missions.is_dir()
-    assert [child.name for child in missions.iterdir()] == [".gitkeep"]
+    assert sorted(child.name for child in missions.iterdir()) == [".gitkeep", "example.md"]
     assert (missions / ".gitkeep").read_text(encoding="utf-8") == ""
+    example = (missions / "example.md").read_text(encoding="utf-8")
+    for heading in ("# Objetivo", "# Escopo", "# Critérios", "# Fora de escopo", "# Observações"):
+        assert heading in example
+    assert "Objective, Scope, Criteria, Out of scope, Notes" in example
 
 
 def test_generated_toml_carries_canonical_project_id(tmp_path: Path) -> None:

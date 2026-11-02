@@ -1,4 +1,4 @@
-"""Executores suportados: binário procurado pelo doctor e arquivo de permissão gerado pelo init."""
+"""Executores suportados: binário do doctor, permissão e instruções geradas pelo init."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +10,8 @@ class ExecutorSpec:
     binary: str
     permission_file: Path
     permission_template: str
+    instruction_file: Path
+    instruction_template: str
 
 
 EXECUTORS: dict[str, ExecutorSpec] = {
@@ -18,6 +20,8 @@ EXECUTORS: dict[str, ExecutorSpec] = {
         binary="claude",
         permission_file=Path(".claude") / "settings.json",
         permission_template="claude_settings.json.tmpl",
+        instruction_file=Path("CLAUDE.md"),
+        instruction_template="CLAUDE.md.tmpl",
     ),
 }
 

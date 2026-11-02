@@ -36,6 +36,7 @@ from lastro.history.errors import (
     HistoryUnavailableError,
     InvalidEventError,
     InvalidTransitionError,
+    MissionPlanError,
     RunNotActiveError,
 )
 from lastro.history.events import (
@@ -47,11 +48,26 @@ from lastro.history.events import (
 )
 from lastro.history.layout import MISSION_SNAPSHOT_RELATIVE, HistoryLayout
 from lastro.history.migrations import apply_migrations
+from lastro.history.mission_plans import (
+    INVALID_PLAN,
+    INVALID_REFERENCE,
+    answer_clarification,
+    blocking_gap,
+    mission_content,
+    request_clarification,
+    resolve_actions,
+    select_active_plan,
+    select_clarifications,
+    select_plans,
+    submit_plan,
+)
 from lastro.history.models import (
     LIFECYCLE_EVENTS,
     PROCESS_LOST_REASON,
+    ActionReference,
     ArtifactRecord,
     ArtifactType,
+    Clarification,
     CleanupResult,
     CleanupStatus,
     CreatedRecord,
@@ -60,8 +76,15 @@ from lastro.history.models import (
     EventRecord,
     EventType,
     ExecutorInfo,
+    HeuristicCheck,
+    JsonObject,
+    JsonValue,
     Mission,
+    MissionContext,
+    MissionPlan,
     MissionSource,
+    PlanStatus,
+    PlanSubmission,
     PolicyDecision,
     RunFilter,
     RunPaths,
@@ -84,6 +107,13 @@ from lastro.history.runs import (
     select_non_terminal,
     select_run,
     validate_mission,
+)
+from lastro.mission.charter import DEFAULT_MAX_TIMEBOX_MINUTES, build_charter
+from lastro.mission.models import (
+    ClarificationAnswer,
+    ClarificationInput,
+    HeuristicCheckInput,
+    MissionPlanInput,
 )
 from lastro.oracles.models import OracleOccurrence, OracleSignal
 from lastro.oracles.sanitize import normalize
@@ -428,6 +458,122 @@ class HistoryStore:
             lambda conn: mark_cleaned(conn, self.project_id, tracking_id, timestamp)
         )
 
+    def mission_context(self, run_id: str) -> MissionContext:
+        """Missão durável da run; a de arquivo é lida do snapshot privado e conferida."""
+        record = self.get_run(run_id)
+        snapshot = (
+            self._layout.mission_snapshot(run_id)
+            if record.mission_source == MissionSource.FILE
+            else None
+        )
+        content, digest = mission_content(record, snapshot)
+        active = self.get_active_mission_plan(run_id)
+        if active is None:
+            status = PlanStatus.MISSING
+        else:
+            status = PlanStatus.ACTIVE if active.exploration_allowed else PlanStatus.BLOCKED
+        return MissionContext(
+            run_id=run_id,
+            source=record.mission_source,
+            content=content,
+            content_sha256=digest,
+            skill_bundle_sha256=record.skill_bundle_version,
+            plan_status=status,
+        )
+
+    def submit_mission_plan(
+        self,
+        run_id: str,
+        plan: MissionPlanInput,
+        *,
+        max_minutes: int = DEFAULT_MAX_TIMEBOX_MINUTES,
+    ) -> PlanSubmission:
+        """Confirma critérios e revisão do plano juntos; submissão idêntica é idempotente."""
+        if run_id in self._failed_closed:
+            raise HistoryUnavailableError()
+        try:
+            charter = build_charter(plan.charter, max_minutes)
+        except ValueError as exc:
+            raise MissionPlanError(INVALID_PLAN, str(exc)) from None
+        timestamp = self._now()
+        try:
+            return self._database.write(
+                lambda conn: submit_plan(conn, run_id, plan, charter, timestamp)
+            )
+        except HistoryUnavailableError:
+            event = prepare_event(
+                EventType.POLICY_DECISION,
+                tool_name="submit_mission_plan",
+                policy_decision=PolicyDecision.DENY,
+                payload={"reason": "history_unavailable"},
+            )
+            self._fail_closed(run_id, event, timestamp)
+            raise
+
+    def get_active_mission_plan(self, run_id: str) -> MissionPlan | None:
+        return self._database.read(lambda conn: select_active_plan(conn, run_id))
+
+    def list_mission_plans(self, run_id: str) -> list[MissionPlan]:
+        """Todas as revisões em ordem, preservadas para auditoria."""
+        return self._database.read(lambda conn: select_plans(conn, run_id))
+
+    def check_blocking_gap(self, run_id: str, gap_id: str) -> MissionPlan:
+        return self._database.read(lambda conn: blocking_gap(conn, run_id, gap_id))
+
+    def request_clarification(
+        self, run_id: str, request: ClarificationInput
+    ) -> tuple[Clarification, bool]:
+        """Grava pergunta, clarification_requested e a espera; repetir o gap é idempotente."""
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: request_clarification(conn, run_id, request, timestamp)
+        )
+
+    def answer_clarification(
+        self, clarification_id: str, answer: ClarificationAnswer
+    ) -> Clarification:
+        """Resposta do canal humano: volta a run para running e nunca grava aprovação."""
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: answer_clarification(conn, clarification_id, answer, timestamp)
+        )
+
+    def list_clarifications(self, run_id: str) -> list[Clarification]:
+        return self._database.read(lambda conn: select_clarifications(conn, run_id))
+
+    def validate_heuristic_check(
+        self, run_id: str, check: HeuristicCheckInput
+    ) -> tuple[ActionReference, ...]:
+        """Confirma critério do plano ativo e ações reais permitidas desta run."""
+
+        def validate(conn: sqlite3.Connection) -> tuple[ActionReference, ...]:
+            if check.criterion_id is not None:
+                active = select_active_plan(conn, run_id)
+                known = {criterion.id for criterion in active.criteria} if active else set[str]()
+                if check.criterion_id not in known:
+                    raise MissionPlanError(
+                        INVALID_REFERENCE, "criterion_id must belong to the active plan"
+                    )
+            return resolve_actions(conn, run_id, check.action_ids)
+
+        return self._database.read(validate)
+
+    def list_heuristic_checks(self, run_id: str) -> list[HeuristicCheck]:
+        """Checks aceitos, lidos dos eventos de política de record_test_check."""
+        checks: list[HeuristicCheck] = []
+        for event in self.list_events(run_id):
+            if (
+                event.event_type != EventType.POLICY_DECISION
+                or event.tool_name != "record_test_check"
+                or event.policy_decision != PolicyDecision.ALLOW
+                or not isinstance(event.payload, dict)
+            ):
+                continue
+            check = event.payload.get("check")
+            if isinstance(check, dict):
+                checks.append(_check_from_payload(event.correlation_id or "", check))
+        return checks
+
     def register_artifact(
         self,
         run_id: str,
@@ -468,6 +614,38 @@ class HistoryStore:
     def list_runs(self, run_filter: RunFilter | None = None) -> list[RunSummary]:
         selected = run_filter or RunFilter()
         return self._database.read(lambda conn: select_runs(conn, selected))
+
+
+def _text(data: JsonObject, key: str) -> str:
+    value = data.get(key)
+    return value if isinstance(value, str) else ""
+
+
+def _check_from_payload(action_id: str, data: JsonObject) -> HeuristicCheck:
+    actions: list[ActionReference] = []
+    raw: JsonValue = data.get("actions")
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        sequence = item.get("sequence")
+        digest = item.get("arguments_sha256")
+        actions.append(
+            ActionReference(
+                action_id=_text(item, "action_id"),
+                tool_name=_text(item, "tool_name"),
+                sequence=sequence if isinstance(sequence, int) else 0,
+                arguments_sha256=digest if isinstance(digest, str) else None,
+            )
+        )
+    criterion = data.get("criterion_id")
+    return HeuristicCheck(
+        action_id=action_id,
+        heuristic=_text(data, "heuristic"),
+        criterion_id=criterion if isinstance(criterion, str) else None,
+        outcome=_text(data, "outcome"),
+        actions=tuple(actions),
+        note=_text(data, "note"),
+    )
 
 
 def open_history(

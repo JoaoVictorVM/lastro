@@ -115,7 +115,7 @@ def test_failed_migration_leaves_database_unchanged(tmp_path: Path) -> None:
     apply_migrations(database)
     before = _schema(path)
     broken = Migration(
-        version=4,
+        version=5,
         name="broken",
         statements=(
             "CREATE TABLE extra (id TEXT PRIMARY KEY)",
@@ -127,13 +127,13 @@ def test_failed_migration_leaves_database_unchanged(tmp_path: Path) -> None:
     with pytest.raises(MigrationError) as info:
         apply_migrations(database, [*MIGRATIONS, broken])
 
-    assert info.value.version == 4
+    assert info.value.version == 5
     assert str(info.value).startswith(
-        "A migração 4 do banco falhou; o banco não foi alterado. "
+        "A migração 5 do banco falhou; o banco não foi alterado. "
         "Execute 'lastro backup' e reporte o problema."
     )
     assert _schema(path) == before
-    assert schema_version(database) == 3
+    assert schema_version(database) == 4
 
 
 def test_failed_first_migration_leaves_empty_database_without_version(tmp_path: Path) -> None:
@@ -159,7 +159,7 @@ def test_changed_published_migration_is_refused(tmp_path: Path) -> None:
 
 def test_unknown_newer_version_is_refused(tmp_path: Path) -> None:
     database = Database(tmp_path / "history.sqlite")
-    newer = Migration(version=4, name="newer", statements=("CREATE TABLE newer (id TEXT)",))
+    newer = Migration(version=5, name="newer", statements=("CREATE TABLE newer (id TEXT)",))
     apply_migrations(database, [*MIGRATIONS, newer])
 
     with pytest.raises(MigrationError, match="desconhecida"):
@@ -180,7 +180,7 @@ def test_oracle_migration_preserves_existing_runs(
             "SELECT checksum_sha256 FROM schema_migrations WHERE version = 1"
         ).fetchone()[0]
     )
-    assert apply_migrations(database) == [2, 3]
+    assert apply_migrations(database) == [2, 3, 4]
     assert (
         database.read(
             lambda conn: conn.execute(
@@ -240,7 +240,7 @@ def test_created_record_action_index_preserves_v001_rows(
     _insert_created(database, record.id, "legacy-2", "{}")
     _insert_created(database, record.id, "legacy-3", '{"action_id": 7}')
 
-    assert apply_migrations(database) == [3]
+    assert apply_migrations(database) == [3, 4]
 
     with database.connection() as conn:
         rows = conn.execute("SELECT id FROM created_records ORDER BY id").fetchall()
@@ -273,3 +273,51 @@ def test_duplicate_action_rejected(tmp_path: Path, history_context: ProjectConte
     with pytest.raises(sqlite3.IntegrityError):
         _insert_created(database, record.id, "second", '{"action_id": "a1"}')
     _insert_created(database, record.id, "other-action", '{"action_id": "a2"}')
+
+
+def test_mission_migration_preserves_existing_runs_and_criteria(
+    tmp_path: Path, history_context: ProjectContext
+) -> None:
+    database = Database(tmp_path / "history.sqlite")
+    apply_migrations(database, MIGRATIONS[:3])
+    record = open_history(history_context).create_run(history_context, TextMission("m")).record
+    database.write(lambda conn: insert_run(conn, record))
+    database.write(
+        lambda conn: conn.execute(
+            "INSERT INTO criteria (id, run_id, payload_json, created_at, updated_at) "
+            "VALUES ('legacy', ?, '{\"flow\":\"cadastro\"}', 'x', 'x')",
+            (record.id,),
+        )
+    )
+    checksums = database.read(
+        lambda conn: conn.execute(
+            "SELECT version, checksum_sha256 FROM schema_migrations ORDER BY version"
+        ).fetchall()
+    )
+
+    assert apply_migrations(database) == [4]
+
+    with database.connection() as conn:
+        assert conn.execute("SELECT id FROM criteria").fetchall()[0]["id"] == "legacy"
+        assert conn.execute("SELECT mission_text FROM runs").fetchone()[0] == "m"
+        tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master")}
+        current = conn.execute(
+            "SELECT version, checksum_sha256 FROM schema_migrations WHERE version < 4 "
+            "ORDER BY version"
+        ).fetchall()
+    assert {"mission_plans", "clarifications", "idx_criteria_run_normalized"} <= tables
+    assert [tuple(row) for row in current] == [tuple(row) for row in checksums]
+
+
+def test_mission_migration_rolls_back_on_failure(tmp_path: Path) -> None:
+    database = Database(tmp_path / "history.sqlite")
+    apply_migrations(database, MIGRATIONS[:3])
+    before = _schema(database.path)
+    mission = MIGRATIONS[3]
+    broken = Migration(mission.version, mission.name, (*mission.statements, "SELECT * FROM x"))
+
+    with pytest.raises(MigrationError):
+        apply_migrations(database, [*MIGRATIONS[:3], broken])
+
+    assert _schema(database.path) == before
+    assert schema_version(database) == 3

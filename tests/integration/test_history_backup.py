@@ -103,7 +103,7 @@ def test_backup_restored_manually_to_empty_folder_preserves_history_output(
     assert verify_restored_backup(restored_root) == []
     manifest = json.loads((restored_root / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["project_id"] == project_id
-    assert manifest["schema_version"] == 3
+    assert manifest["schema_version"] == 4
     restored_runs = restored_root / project_id / "runs"
     for summary in store.list_runs():
         assert (restored_runs / summary.record.id / "evidence").is_dir()
@@ -183,3 +183,57 @@ def test_backup_restores_created_records_and_cleanup_state(
     statuses = {record.id: record.cleanup_status for record in before}
     assert statuses[cleaned.id] == CleanupStatus.CLEANED_MANUALLY
     assert sorted(statuses.values()) == [CleanupStatus.CLEANED_MANUALLY, CleanupStatus.PENDING]
+
+
+def test_backup_restores_plans_criteria_and_clarifications(
+    history_context: ProjectContext, tmp_path: Path
+) -> None:
+    from lastro.history.database import Database
+    from lastro.mission import ClarificationAnswer, ClarificationInput, MissionPlanInput
+
+    store = open_history(history_context)
+    run_id = store.create_run(history_context, TextMission("Explore")).record.id
+    plan = store.submit_mission_plan(
+        run_id,
+        MissionPlanInput.model_validate(
+            {
+                "objectives": ["Validar telefone"],
+                "scope": [],
+                "criteria": [{"text": "Telefone persiste", "source": "mission_explicit"}],
+                "gaps": [{"description": "Formato não informado", "blocking": True}],
+                "out_of_scope": [],
+                "charter": {
+                    "target": "employee phone",
+                    "resources": ["demo"],
+                    "information": "persistence defects",
+                    "heuristics": ["persistence_after_reload"],
+                },
+            }
+        ),
+    ).plan
+    clarification, _ = store.request_clarification(
+        run_id,
+        ClarificationInput(
+            gap_id=plan.gaps[0].id,
+            question="Formato?",
+            why_it_matters="Fronteiras",
+            options=["A", "B"],
+        ),
+    )
+    store.answer_clarification(clarification.id, ClarificationAnswer(answer="A"))
+    destination = tmp_path / "backups"
+    destination.mkdir()
+    result = store.backup(destination)
+    restored = tmp_path / "restaurado"
+    with zipfile.ZipFile(result.archive) as archive:
+        archive.extractall(restored)
+
+    assert verify_restored_backup(restored) == []
+    database = Database(restored / history_context.require_project_id() / "history.sqlite")
+    with database.connection() as conn:
+        plans = conn.execute("SELECT id, run_id FROM mission_plans").fetchall()
+        criteria = conn.execute("SELECT id FROM criteria WHERE run_id = ?", (run_id,)).fetchall()
+        answered = conn.execute("SELECT status, mission_plan_id FROM clarifications").fetchall()
+    assert [(row["id"], row["run_id"]) for row in plans] == [(plan.id, run_id)]
+    assert [row["id"] for row in criteria] == [plan.criteria[0].id]
+    assert [(row["status"], row["mission_plan_id"]) for row in answered] == [("answered", plan.id)]

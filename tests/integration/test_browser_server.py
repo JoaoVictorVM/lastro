@@ -56,6 +56,11 @@ def test_mcp_stdio_catalog_and_no_active_run(make_auth_project: Callable[..., An
             await client.initialize()
             catalog = await client.list_tools()
             assert {tool.name for tool in catalog.tools} == set(TOOLS)
+            schemas = {tool.name: tool.inputSchema for tool in catalog.tools}
+            assert "objectives" in schemas["submit_mission_plan"]["properties"]
+            assert "action_ids" in schemas["record_test_check"]["properties"]
+            assert "why_it_matters" in schemas["ask_clarification"]["properties"]
+            assert schemas["mission_context"].get("properties", {}) == {}
             result = await client.call_tool("observe", {})
             assert isinstance(result.content[0], TextContent)
             assert json.loads(result.content[0].text)["error"].startswith("No active run")
@@ -68,13 +73,41 @@ def test_end_run_and_unavailable_clarification(make_auth_project: Callable[..., 
     history = open_history(project)
     run = history.create_run(project, TextMission("read"))
     runtime = BrowserTools(project, history, run.record.id)
-    result = asyncio.run(runtime.call("ask_clarification", {"question": "Which flow?"}))
+    plan = asyncio.run(
+        runtime.call(
+            "submit_mission_plan",
+            {
+                "objectives": ["Read the employee list"],
+                "scope": [],
+                "criteria": [],
+                "gaps": [{"description": "Which flow matters most?", "blocking": True}],
+                "out_of_scope": [],
+                "charter": {
+                    "target": "employee list",
+                    "resources": ["demo"],
+                    "information": "read defects",
+                    "heuristics": ["crud_consistency"],
+                },
+            },
+        )
+    )
+    result = asyncio.run(
+        runtime.call(
+            "ask_clarification",
+            {
+                "gap_id": plan["blocking_gaps"][0],
+                "question": "Which flow?",
+                "why_it_matters": "It sets the scope",
+                "options": ["List", "Detail"],
+            },
+        )
+    )
     assert result["reason"] == "clarification_channel_unavailable"
     assert history.get_run(run.record.id).status.value == "running"
     result = asyncio.run(
         runtime.call("end_run", {"outcome": "completed", "reason": "Mission finished"})
     )
-    assert result == {"status": "completed"}
+    assert result["status"] == "completed"
     assert history.get_active_run() is None
     assert asyncio.run(runtime.call("observe", {}))["error"].startswith("No active run")
 

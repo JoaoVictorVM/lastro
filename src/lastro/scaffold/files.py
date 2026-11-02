@@ -1,5 +1,6 @@
 """Geração dos arquivos do lastro init a partir dos templates do pacote."""
 
+import hashlib
 import json
 import os
 import tomllib
@@ -12,10 +13,13 @@ from string import Template
 
 from lastro.config.schema import DEFAULT_EXECUTOR, is_canonical_project_id, new_project_id
 from lastro.executors import ExecutorSpec, get_executor
+from lastro.mission.bundle import BUNDLE_DIR, PREVIOUS_SHA256, bundle_files, instruction_problems
+from lastro.skills import normalize
 
 CONFIG_FILE = Path("lastro.toml")
 ENV_EXAMPLE_FILE = Path(".env.example")
 MISSIONS_MARKER = Path("missions") / ".gitkeep"
+MISSION_EXAMPLE = Path("missions") / "example.md"
 CREDENTIAL_PREFIX = "LASTRO_"
 
 
@@ -32,6 +36,8 @@ class InitAnswers:
 class ScaffoldResult:
     created: list[Path] = field(default_factory=list[Path])
     preserved: list[Path] = field(default_factory=list[Path])
+    updated: list[Path] = field(default_factory=list[Path])
+    diagnostics: list[str] = field(default_factory=list[str])
 
 
 def credential_variable_names(profile_name: str) -> tuple[str, str]:
@@ -78,7 +84,10 @@ def render_files(answers: InitAnswers, executor: str = DEFAULT_EXECUTOR) -> dict
         CONFIG_FILE: _template("lastro.toml.tmpl").substitute(toml_values),
         ENV_EXAMPLE_FILE: _template("env.example.tmpl").substitute(env_values),
         spec.permission_file: _template(spec.permission_template).template,
+        spec.instruction_file: _template(spec.instruction_template).template,
         MISSIONS_MARKER: "",
+        MISSION_EXAMPLE: _template("mission.md.tmpl").template,
+        **bundle_files(),
         Path(".mcp.json"): json.dumps(
             {
                 "mcpServers": {
@@ -94,15 +103,54 @@ def render_files(answers: InitAnswers, executor: str = DEFAULT_EXECUTOR) -> dict
     }
 
 
+def _replace_atomically(target: Path, content: str) -> None:
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _managed_existing(
+    project_dir: Path, relative: Path, content: str, result: ScaffoldResult
+) -> None:
+    """Arquivo do bundle já existente: igual fica, versão antiga conhecida é atualizada."""
+    target = project_dir / relative
+    current = normalize(target.read_bytes())
+    if current == normalize(content.encode("utf-8")):
+        result.preserved.append(relative)
+        return
+    digest = hashlib.sha256(current).hexdigest()
+    if digest in PREVIOUS_SHA256.get(relative.name, frozenset()):
+        _replace_atomically(target, content)
+        result.updated.append(relative)
+        return
+    result.preserved.append(relative)
+    package = files("lastro.skills").joinpath(relative.name)
+    result.diagnostics.append(
+        f"{relative.as_posix()} foi modificado localmente e não foi sobrescrito; compare com "
+        f"git diff --no-index {package} {relative.as_posix()}"
+    )
+
+
 def write_scaffold(
     project_dir: Path, answers: InitAnswers, executor: str = DEFAULT_EXECUTOR
 ) -> ScaffoldResult:
-    """Cria os arquivos ausentes; arquivos existentes nunca são sobrescritos."""
+    """Cria os arquivos ausentes; arquivos existentes nunca são sobrescritos.
+
+    A exceção são arquivos do bundle idênticos a uma versão publicada anterior, trocados
+    atomicamente pela versão atual.
+    """
     result = ScaffoldResult()
     for relative, content in render_files(answers, executor).items():
         target = project_dir / relative
         if target.exists():
-            result.preserved.append(relative)
+            if relative.parent == BUNDLE_DIR:
+                _managed_existing(project_dir, relative, content, result)
+            else:
+                result.preserved.append(relative)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -112,6 +160,12 @@ def write_scaffold(
             result.preserved.append(relative)
             continue
         result.created.append(relative)
+    instructions = executor_spec(executor).instruction_file
+    if instructions in result.preserved:
+        result.diagnostics += [
+            problem + "; ajuste o arquivo para apontar para o bundle"
+            for problem in instruction_problems(project_dir / instructions)
+        ]
     return result
 
 

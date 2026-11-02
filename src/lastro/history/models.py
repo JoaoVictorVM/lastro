@@ -284,3 +284,107 @@ def unidentified_warning(run_id: str, records: list[CreatedRecord]) -> str | Non
         f"{count} created {noun} could not be identified automatically; "
         f"check the target system for names starting with LASTRO-{run_id[-4:]}."
     )
+
+
+class PlanStatus(StrEnum):
+    MISSING = "missing"
+    ACTIVE = "active"
+    BLOCKED = "blocked"
+
+
+class ClarificationStatus(StrEnum):
+    PENDING = "pending"
+    ANSWERED = "answered"
+    SKIPPED = "skipped"
+
+
+@dataclass(frozen=True)
+class MissionContext:
+    """Fonte durável da missão: dados de requisito, nunca configuração de tools ou políticas."""
+
+    run_id: str
+    source: MissionSource
+    content: str
+    content_sha256: str
+    skill_bundle_sha256: str | None
+    plan_status: PlanStatus
+
+
+@dataclass(frozen=True)
+class PlanCriterion:
+    id: str
+    text: str
+    source: str
+
+
+@dataclass(frozen=True)
+class PlanGap:
+    id: str
+    description: str
+    blocking: bool
+
+
+@dataclass(frozen=True)
+class MissionPlan:
+    id: str
+    run_id: str
+    revision: int
+    content_sha256: str
+    objectives: tuple[str, ...]
+    scope: tuple[str, ...]
+    criteria: tuple[PlanCriterion, ...]
+    gaps: tuple[PlanGap, ...]
+    out_of_scope: tuple[str, ...]
+    charter: JsonObject
+    revision_reason: str
+    clarification_id: str | None
+    created_at: str
+
+    @property
+    def blocking_gaps(self) -> tuple[PlanGap, ...]:
+        return tuple(gap for gap in self.gaps if gap.blocking)
+
+    @property
+    def exploration_allowed(self) -> bool:
+        return not self.blocking_gaps
+
+
+@dataclass(frozen=True)
+class PlanSubmission:
+    plan: MissionPlan
+    created: bool
+
+
+@dataclass(frozen=True)
+class Clarification:
+    id: str
+    run_id: str
+    mission_plan_id: str
+    gap_id: str
+    question: str
+    why_it_matters: str
+    options: tuple[str, ...]
+    status: ClarificationStatus
+    answer: JsonObject | None
+    requested_at: str
+    answered_at: str | None
+
+
+@dataclass(frozen=True)
+class ActionReference:
+    action_id: str
+    tool_name: str
+    sequence: int
+    arguments_sha256: str | None
+
+
+@dataclass(frozen=True)
+class HeuristicCheck:
+    """Aplicação de heurística confirmada por ações reais da mesma run."""
+
+    action_id: str
+    heuristic: str
+    criterion_id: str | None
+    outcome: str
+    actions: tuple[ActionReference, ...]
+    note: str

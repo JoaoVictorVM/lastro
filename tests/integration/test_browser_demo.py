@@ -24,7 +24,7 @@ def test_demo_deactivate_never_reaches_server(
             result = await runtime.call(
                 "navigate", {"url": project.profile.target_url + "/employees"}
             )
-            assert result == {"status": "ok"}, result
+            assert result["status"] == "ok", result
             observed = await runtime.call("observe", {})
             assert "<untrusted-content>" in observed["content"]
             page = cast(Page, runtime.session.page)
@@ -65,7 +65,7 @@ def test_pre_authorized_update_and_unconfirmed_origin(
             )
             assert href is not None
             result = await runtime.call("navigate", {"url": project.profile.target_url + href})
-            assert result == {"status": "ok"}
+            assert result["status"] == "ok"
             result = await runtime.call(
                 "fill", {"target": {"label": "E-mail"}, "value": "qa@example.com"}
             )
@@ -104,9 +104,9 @@ def test_authorized_write_screenshot_and_crash_recovery(
             result = await runtime.call(
                 "fill", {"target": {"label": "E-mail"}, "value": "qa@example.com"}
             )
-            assert result == {"status": "ok"}, result
+            assert result["status"] == "ok", result
             result = await runtime.call("submit", {"target": {"role": "button", "name": "Salvar"}})
-            assert result == {"status": "ok"}, result
+            assert result["status"] == "ok", result
             artifact = await runtime.call("screenshot", {})
             assert len(artifact["sha256"]) == 64
             runtime.session.on_crash()

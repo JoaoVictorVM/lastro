@@ -87,4 +87,5 @@ def run_doctor(
         results += [checks.check_target(env, profile) for profile in profiles]
         results += [checks.check_version_endpoint(env, profile) for profile in profiles]
         results.append(checks.check_permission_file(project_dir, executor))
+    results.append(checks.check_skill_bundle(project_dir, executor))
     return results

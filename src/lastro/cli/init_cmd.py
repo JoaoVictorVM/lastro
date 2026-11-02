@@ -148,7 +148,8 @@ def init(
         ),
     ] = None,
 ) -> None:
-    """Cria lastro.toml, .env.example, a permissão do executor, missions/ e o private data root.
+    """Cria lastro.toml, .env.example, permissão e instruções do executor, bundle de skills,
+    missions/ e o private data root.
 
     Em um projeto existente sem project_id, apenas acrescenta o campo ao lastro.toml, sem
     perguntas e sem mudar os demais valores.
@@ -166,8 +167,12 @@ def init(
 
     for relative in result.created:
         output.info(f"Criado: {relative.as_posix()}")
+    for relative in result.updated:
+        output.info(f"Atualizado: {relative.as_posix()}")
     for relative in result.preserved:
         output.info(f"Preservado (já existia): {relative.as_posix()}")
+    for diagnostic in result.diagnostics:
+        output.error(f"Aviso: {diagnostic}")
     if CONFIG_FILE in result.preserved:
         _report_project_id(project_dir)
 
