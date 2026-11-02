@@ -8,6 +8,7 @@ from playwright.async_api import Page
 
 from lastro.browser.demo import FIELDS, demo_policy
 from lastro.browser.tools import BrowserTools
+from lastro.config.loader import ProjectContext
 from lastro.config.policy import Preauthorized
 from lastro.history import EventType, TextMission, open_history
 from lastro.oracles.ignore import IgnoreRule
@@ -343,6 +344,42 @@ def test_observe_budget_preserves_signal_list_and_valid_json(
     asyncio.run(scenario())
 
 
-@pytest.mark.skip(reason="integração de relatório pendente até existir o report builder")
-def test_report_oracle_section_links_triggering_actions_and_source() -> None:
-    pass
+def test_report_oracle_section_links_triggering_actions_and_source(
+    history_context: ProjectContext,
+) -> None:
+    from lastro.history import EventType, RunStatus, TextMission, open_history
+    from lastro.oracles.models import OracleOccurrence
+    from lastro.reporting import ReportBuilder
+
+    store = open_history(history_context)
+    run_id = store.create_run(history_context, TextMission("Observar")).record.id
+    action = store.append_event(
+        run_id, EventType.TOOL_CALL, tool_name="submit", correlation_id="action-save"
+    )
+    store.record_oracle_signal(
+        run_id,
+        OracleOccurrence.model_validate(
+            {
+                "occurrence_id": "occurrence-1",
+                "signal_type": "http_5xx",
+                "url": "https://example.test/api/employees/7",
+                "url_path": "/api/employees/7",
+                "http_method": "PUT",
+                "http_status": 500,
+                "message": "HTTP 500",
+                "timestamp": "2026-11-01T15:00:04.000000Z",
+                "action_id": "action-save",
+                "action_sequence": action.sequence,
+            }
+        ),
+    )
+    store.finish_run(run_id, RunStatus.COMPLETED)
+
+    outcome = ReportBuilder(store).build_final(run_id)
+
+    assert outcome.report_path is not None
+    text = outcome.report_path.read_text(encoding="utf-8")
+    section = text[text.index("## Oracle signals") : text.index("## Agent and tool failures")]
+    assert "http_5xx" in section
+    assert "PUT `/api/employees/7` 500" in section
+    assert f"submit #{action.sequence} (`action-save`)" in section

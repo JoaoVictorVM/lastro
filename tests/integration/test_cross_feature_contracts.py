@@ -239,6 +239,41 @@ def test_f03_mission_is_parsed_and_stored_for_active_run(
     assert store.get_run(run.id).mission_snapshot_path == "mission/source.md"
 
 
-@pytest.mark.skip(reason="aguarda o relatório gerado a partir do histórico da run")
-def test_report_includes_active_mission_plan_and_charter() -> None:
-    raise AssertionError("contrato reservado")
+def test_report_includes_active_mission_plan_and_charter(
+    history_context: ProjectContext,
+) -> None:
+    from lastro.mission import MissionPlanInput
+    from lastro.reporting import ReportBuilder
+
+    store = open_history(history_context)
+    run_id = store.create_run(history_context, TextMission("Validar o cadastro")).record.id
+    plan = store.submit_mission_plan(
+        run_id,
+        MissionPlanInput.model_validate(
+            {
+                "objectives": ["Validar o cadastro"],
+                "scope": ["Editar funcionário"],
+                "criteria": [{"text": "O telefone persiste", "source": "mission_explicit"}],
+                "gaps": [],
+                "out_of_scope": ["Excluir"],
+                "charter": {
+                    "target": "employee registration",
+                    "resources": ["demo"],
+                    "information": "persistence defects",
+                    "heuristics": ["persistence_after_reload"],
+                },
+            }
+        ),
+    ).plan
+    store.seal_criterion_results(run_id)
+    store.finish_run(run_id, RunStatus.COMPLETED)
+
+    outcome = ReportBuilder(store).build_final(run_id)
+
+    assert outcome.report_path is not None
+    text = outcome.report_path.read_text(encoding="utf-8")
+    mission = text[text.index("## Mission and charter") : text.index("## Environment")]
+    assert f"Charter: {plan.charter['statement']}" in mission
+    assert "- Validar o cadastro" in mission
+    criteria = text[text.index("## Criteria results") : text.index("## Confirmed findings")]
+    assert f"O telefone persiste (`{plan.criteria[0].id}`) | inconclusive" in criteria

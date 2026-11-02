@@ -73,9 +73,15 @@ from lastro.history.models import (
     CreatedRecord,
     CreatedRecordInput,
     CreatedRun,
+    CriterionResult,
+    CriterionResultDraft,
+    CriterionSubmission,
     EventRecord,
     EventType,
     ExecutorInfo,
+    Finding,
+    FindingDraft,
+    FindingSubmission,
     HeuristicCheck,
     JsonObject,
     JsonValue,
@@ -86,15 +92,36 @@ from lastro.history.models import (
     PlanStatus,
     PlanSubmission,
     PolicyDecision,
+    ReportInputs,
+    ReportKind,
+    ReportSnapshot,
+    ReproductionAttempt,
+    ReproductionOutcome,
     RunFilter,
     RunPaths,
     RunRecord,
     RunStatus,
     RunSummary,
+    SnapshotStatus,
 )
 from lastro.history.oracles import record_signal, select_signals
 from lastro.history.processes import ProcessChecker, process_exists
 from lastro.history.queries import select_runs
+from lastro.history.reporting import (
+    check_criterion_result,
+    check_finding,
+    close_snapshot,
+    insert_criterion_result,
+    insert_finding,
+    insert_reproduction_attempt,
+    open_snapshot,
+    promote,
+    seal_results,
+    select_criterion_results,
+    select_finding,
+    select_findings,
+    select_snapshots,
+)
 from lastro.history.runs import (
     RUN_ID_ENTROPY_BYTES,
     apply_transition,
@@ -166,6 +193,10 @@ class HistoryStore:
 
     def _now(self) -> str:
         return db_timestamp(self._clock())
+
+    def run_dir(self, run_id: str) -> Path:
+        """Pasta privada da run, sem consultar o banco."""
+        return self._layout.run_dir(run_id)
 
     def run_paths(self, run_id: str) -> RunPaths:
         record = self.get_run(run_id)
@@ -605,6 +636,142 @@ class HistoryStore:
 
     def list_artifacts(self, run_id: str) -> list[ArtifactRecord]:
         return self._database.read(lambda conn: list_artifacts(conn, run_id))
+
+    def check_finding(self, run_id: str, draft: FindingDraft) -> None:
+        """Valida referências antes da auditoria; a gravação repete a validação na transação."""
+        self._database.read(lambda conn: check_finding(conn, run_id, draft))
+
+    def report_finding(self, run_id: str, draft: FindingDraft) -> FindingSubmission:
+        """Confirma achado, passos, evidências e finding_submitted juntos, ou nenhum deles."""
+        if run_id in self._failed_closed:
+            raise HistoryUnavailableError()
+        timestamp = self._now()
+        try:
+            return self._database.write(lambda conn: insert_finding(conn, run_id, draft, timestamp))
+        except HistoryUnavailableError:
+            event = prepare_event(
+                EventType.FINDING_SUBMITTED, payload={"title": draft.title, "flow": draft.flow}
+            )
+            self._fail_closed(run_id, event, timestamp)
+            raise
+
+    def get_finding(self, finding_id: str) -> Finding:
+        return self._database.read(lambda conn: select_finding(conn, finding_id))
+
+    def list_findings(self, run_id: str) -> list[Finding]:
+        """Achados estruturados em ordem de criação, lidos por métricas e comparações."""
+        return self._database.read(lambda conn: select_findings(conn, run_id))
+
+    def record_reproduction_attempt(
+        self,
+        finding_id: str,
+        child_run_id: str,
+        outcome: ReproductionOutcome,
+        evidence_artifact_ids: tuple[str, ...],
+        executor: str,
+    ) -> ReproductionAttempt:
+        """Interface interna da reprodução independente; não é exposta ao agente."""
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: insert_reproduction_attempt(
+                conn, finding_id, child_run_id, outcome, evidence_artifact_ids, executor, timestamp
+            )
+        )
+
+    def promote_finding(self, finding_id: str) -> Finding:
+        """Única via para confirmed: evidência própria e ao menos uma reprodução bem-sucedida."""
+        timestamp = self._now()
+        return self._database.write(lambda conn: promote(conn, finding_id, timestamp))
+
+    def check_criterion_result(self, run_id: str, draft: CriterionResultDraft) -> None:
+        self._database.read(lambda conn: check_criterion_result(conn, run_id, draft))
+
+    def record_criterion_result(
+        self, run_id: str, draft: CriterionResultDraft
+    ) -> CriterionSubmission:
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: insert_criterion_result(conn, run_id, draft, timestamp)
+        )
+
+    def seal_criterion_results(self, run_id: str) -> list[CriterionResult]:
+        """Chamado com a run ainda ativa, antes da transição terminal."""
+        timestamp = self._now()
+        return self._database.write(lambda conn: seal_results(conn, run_id, timestamp))
+
+    def list_criterion_results(
+        self, run_id: str, *, current_only: bool = True
+    ) -> list[CriterionResult]:
+        return self._database.read(
+            lambda conn: select_criterion_results(conn, run_id, current_only=current_only)
+        )
+
+    def report_inputs(self, run_id: str) -> ReportInputs:
+        """Tudo que o relatório projeta, lido numa única transação de leitura."""
+
+        def read(conn: sqlite3.Connection) -> ReportInputs:
+            return ReportInputs(
+                run=select_run(conn, run_id),
+                events=tuple(select_events(conn, run_id)),
+                artifacts=tuple(list_artifacts(conn, run_id)),
+                findings=tuple(select_findings(conn, run_id)),
+                criterion_results=tuple(select_criterion_results(conn, run_id)),
+                plan=select_active_plan(conn, run_id),
+                clarifications=tuple(select_clarifications(conn, run_id)),
+                created_records=tuple(select_created_records(conn, self.project_id, run_id=run_id)),
+                oracle_signals=tuple(
+                    sorted(select_signals(conn, run_id), key=lambda signal: signal.last_event_id)
+                ),
+            )
+
+        return self._database.read(read)
+
+    def open_report_snapshot(
+        self,
+        run_id: str,
+        kind: ReportKind,
+        input_sha256: str,
+        termination_reason: str | None = None,
+    ) -> ReportSnapshot:
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: open_snapshot(
+                conn, run_id, kind, input_sha256, termination_reason, timestamp
+            )
+        )
+
+    def close_report_snapshot(
+        self,
+        snapshot_id: str,
+        *,
+        status: SnapshotStatus,
+        report_artifact_id: str | None = None,
+        fallback_artifact_id: str | None = None,
+        issue_artifact_ids: tuple[str, ...] = (),
+        integrity_valid: bool | None = None,
+        error_text: str | None = None,
+        duration_ms: int | None = None,
+    ) -> ReportSnapshot:
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: close_snapshot(
+                conn,
+                snapshot_id,
+                status=status,
+                report_artifact_id=report_artifact_id,
+                fallback_artifact_id=fallback_artifact_id,
+                issue_artifact_ids=issue_artifact_ids,
+                integrity_valid=integrity_valid,
+                error_text=error_text,
+                duration_ms=duration_ms,
+                timestamp=timestamp,
+            )
+        )
+
+    def list_report_snapshots(
+        self, run_id: str, kind: ReportKind | None = None
+    ) -> list[ReportSnapshot]:
+        return self._database.read(lambda conn: select_snapshots(conn, run_id, kind))
 
     def backup(self, destination: Path) -> BackupResult:
         return create_backup(

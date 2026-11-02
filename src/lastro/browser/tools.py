@@ -16,6 +16,7 @@ from lastro.browser.bindings import ExpectedRequest, path_parameters
 from lastro.browser.events import record_call
 from lastro.browser.policy import Action, Decision
 from lastro.browser.session import BrowserSession
+from lastro.browser.video import EvidenceVideoRecorder, VideoError
 from lastro.config.loader import ProjectContext
 from lastro.config.policy import Binding, Strict, Target
 from lastro.config.schema import is_same_origin
@@ -27,6 +28,7 @@ from lastro.history import (
     JsonObject,
     MissionPlan,
     MissionPlanError,
+    ReportingError,
     RunStatus,
 )
 from lastro.history.redaction import preview, redact_text
@@ -39,6 +41,15 @@ from lastro.mission import (
 )
 from lastro.mission.models import EXPLORATION_TOOLS
 from lastro.oracles.models import OracleSignal
+from lastro.reporting.builder import ReportBuilder
+from lastro.reporting.models import (
+    CriterionResultInput,
+    FindingInput,
+    StartVideoInput,
+    StopVideoInput,
+    parse_criterion_result,
+    parse_finding,
+)
 from lastro.testdata import TestDataRequest, generate, parse_request, reference_date
 from lastro.timeutil import utc_now
 
@@ -56,6 +67,9 @@ TOOLS = (
     "screenshot",
     "wait_for",
     "report_finding",
+    "record_criterion_result",
+    "start_evidence_video",
+    "stop_evidence_video",
     "ask_clarification",
     "end_run",
     "generate_test_data",
@@ -91,6 +105,15 @@ INPUT_MODELS: dict[str, type[BaseModel]] = {
 }
 
 
+# Contratos próprios das tools de evidência; o catálogo MCP publica estes schemas.
+REPORTING_MODELS: dict[str, type[BaseModel]] = {
+    "report_finding": FindingInput,
+    "record_criterion_result": CriterionResultInput,
+    "start_evidence_video": StartVideoInput,
+    "stop_evidence_video": StopVideoInput,
+}
+
+
 class Arguments(Strict):
     target: Target | None = None
     url: str | None = None
@@ -98,13 +121,13 @@ class Arguments(Strict):
     timeout_ms: int = Field(default=5000, ge=1, le=30000)
     outcome: Literal["completed", "blocked"] = "completed"
     reason: str = Field(default="", max_length=2000)
-    title: str | None = None
-    flow: str | None = None
-    steps: list[str] = Field(default_factory=list[str])
-    expected: str | None = None
-    source: str | None = None
-    observed: str | None = None
-    evidence: list[str] = Field(default_factory=list[str])
+
+
+def input_schema(name: str) -> dict[str, Any]:
+    if name == "generate_test_data":
+        return TestDataRequest.model_json_schema()
+    model = INPUT_MODELS.get(name) or REPORTING_MODELS.get(name) or Arguments
+    return model.model_json_schema()
 
 
 def untrusted(text: str) -> str:
@@ -246,6 +269,7 @@ class BrowserTools:
         self.snapshot = config_snapshot(project)
         self.session = BrowserSession(project, history, run_id, self.active)
         self.provenance = self.session.provenance
+        self.video = EvidenceVideoRecorder(self.session, history, run_id, history.run_dir(run_id))
 
     def active(self) -> None:
         run = self.history.get_active_run(self.run_id)
@@ -295,6 +319,14 @@ class BrowserTools:
                 recorded = True
                 self.active()
                 return self.mission_tool(name, parsed, action_id)
+            if name in REPORTING_MODELS:
+                details, decision = self.reporting_check(name, raw, action_id)
+                self.session.action_sequence = record_call(
+                    self.history, self.run_id, action_id, name, raw, decision
+                )
+                recorded = True
+                self.active()
+                return await self.reporting_tool(name, details)
             if name == "generate_test_data":
                 request = parse_request(raw)
                 self.session.action_sequence = record_call(
@@ -343,6 +375,19 @@ class BrowserTools:
             if operation is not None:
                 return await operation()
             return await self.execute(name, args, action_id)
+        except (ReportingError, VideoError) as error:
+            if not recorded:
+                record_call(
+                    self.history,
+                    self.run_id,
+                    action_id,
+                    name,
+                    {},
+                    Decision("deny", error.code, ""),
+                )
+            if isinstance(error, VideoError):
+                return {"error": error.code}
+            return {"error": error.code, "detail": error.detail}
         except MissionPlanError as error:
             if not recorded:
                 record_call(
@@ -439,6 +484,70 @@ class BrowserTools:
                 "created": created,
             }
         return {"status": "recorded", "check_id": action_id}
+
+    def reporting_check(
+        self, name: str, raw: dict[str, Any], action_id: str
+    ) -> tuple[Any, Decision]:
+        """Valida formato e referências antes da auditoria; a gravação revalida na transação."""
+        if name == "report_finding":
+            finding = parse_finding(raw, action_id)
+            self.history.check_finding(self.run_id, finding)
+            return finding, Decision("allow", "metadata", "")
+        if name == "record_criterion_result":
+            result = parse_criterion_result(raw)
+            self.history.check_criterion_result(self.run_id, result)
+            return result, Decision("allow", "metadata", "")
+        model = REPORTING_MODELS[name]
+        return model.model_validate(raw), self.session.policy.decide(Action("read"), False)
+
+    async def reporting_tool(self, name: str, details: Any) -> dict[str, Any]:
+        if name == "report_finding":
+            submission = self.history.report_finding(self.run_id, details)
+            finding = submission.finding
+            return {
+                "finding_id": finding.id,
+                "classification": finding.classification.value,
+                "evidence_artifact_ids": [item.artifact_id for item in finding.evidence],
+                "created": submission.created,
+            }
+        if name == "record_criterion_result":
+            recorded = self.history.record_criterion_result(self.run_id, details)
+            return {
+                "result_id": recorded.result.id,
+                "revision": recorded.result.revision,
+                "outcome": recorded.result.outcome.value,
+                "created": recorded.created,
+            }
+        if isinstance(details, StartVideoInput):
+            await self.session.start()
+            return await self.video.start(details.reason)
+        assert isinstance(details, StopVideoInput)
+        return await self.video.stop(details.recording_id)
+
+    async def end_run(self, args: Arguments) -> dict[str, Any]:
+        """Fecha a captura e o browser, sela critérios com a run ativa e só então termina."""
+        try:
+            await self.video.close()
+        finally:
+            await self.session.close()
+        self.history.seal_criterion_results(self.run_id)
+        self.history.finish_run(self.run_id, RunStatus(args.outcome), args.reason)
+        result: dict[str, Any] = {"status": args.outcome}
+        # O relatório fica fora da transação terminal: falhar aqui nunca reabre nem muda a run.
+        try:
+            report = ReportBuilder(self.history).build_final(self.run_id)
+        except Exception as error:
+            result.update(report_status="failed", report_error=self.session.sanitize(str(error)))
+            return result
+        result.update(
+            report_status=report.status.value,
+            report_path=str(report.report_path or report.fallback_path or ""),
+            issue_paths=[str(path) for path in report.issue_paths],
+            summary=list(report.summary_lines),
+        )
+        if report.snapshot.error_text:
+            result["report_error"] = report.snapshot.error_text
+        return result
 
     async def prepare(self, name: str, args: Arguments, action_id: str) -> tuple[Any, Decision]:
         if args.target is None:
@@ -579,21 +688,7 @@ class BrowserTools:
         if name in {"knowledge_query", "knowledge_propose"}:
             return {"status": "unavailable", "reason": name + "_unavailable"}
         if name == "end_run":
-            await self.session.close()
-            self.history.finish_run(self.run_id, RunStatus(args.outcome), args.reason)
-            return {"status": args.outcome}
-        if name == "report_finding":
-            if not all(
-                (args.title, args.flow, args.steps, args.expected, args.source, args.observed)
-            ):
-                raise ValueError("Missing finding fields")
-            known = {str(item.id) for item in self.history.list_artifacts(self.run_id)}
-            if not set(args.evidence) <= known:
-                raise ValueError("Evidence must belong to this run")
-            self.history.append_event(
-                self.run_id, EventType.FINDING_SUBMITTED, payload=args.model_dump(exclude_none=True)
-            )
-            return {"status": "recorded"}
+            return await self.end_run(args)
         page = await self.session.start()
         if name == "observe":
             snapshot = await page.locator("body").aria_snapshot()
