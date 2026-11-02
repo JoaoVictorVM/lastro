@@ -28,7 +28,7 @@ from lastro.browser.provenance import Provenance
 from lastro.config.loader import ProjectContext
 from lastro.config.policy import safe_path
 from lastro.config.schema import is_same_origin
-from lastro.history import EventType, HistoryStore, RunStatus
+from lastro.history import CreatedRecordInput, EventType, HistoryStore, RunStatus
 from lastro.oracles.collector import OracleCollector
 
 
@@ -401,7 +401,16 @@ class BrowserSession:
                             data = data[key]
                         record = data
                     if isinstance(record, str | int) and not isinstance(record, bool):
-                        self.provenance.record(binding.entity, str(record), expected.action_id)
+                        self.provenance.record(
+                            CreatedRecordInput(
+                                run_id=self.run_id,
+                                action_id=expected.action_id,
+                                entity=binding.entity,
+                                system_identifier=str(record),
+                                tenant=self.project.profile.tenant_id,
+                                expected_tenant=self.project.profile.tenant_id,
+                            )
+                        )
             self.history.append_event(
                 self.run_id,
                 EventType.POLICY_DECISION,

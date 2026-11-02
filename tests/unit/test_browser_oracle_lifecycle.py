@@ -2,6 +2,8 @@ import asyncio
 from unittest.mock import AsyncMock, Mock
 
 from lastro.browser.bindings import ExpectedRequest
+from lastro.browser.events import record_call
+from lastro.browser.policy import Decision
 from lastro.browser.session import BrowserSession
 from lastro.config.loader import ProjectContext
 from lastro.config.policy import Binding, RequestBinding, Target
@@ -28,6 +30,7 @@ def test_request_completion_preserves_creation_proof(history_context: ProjectCon
     response = Mock(request=request, status=201, url=url)
     response.json = AsyncMock(return_value={"id": "new-employee"})
     session.request_actions[request] = ExpectedRequest(binding, url, {}, "create-action")
+    record_call(history, run_id, "create-action", "submit", {}, Decision("allow", "", ""))
 
     async def scenario() -> None:
         session.response(response)

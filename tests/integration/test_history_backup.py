@@ -103,7 +103,7 @@ def test_backup_restored_manually_to_empty_folder_preserves_history_output(
     assert verify_restored_backup(restored_root) == []
     manifest = json.loads((restored_root / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["project_id"] == project_id
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
     restored_runs = restored_root / project_id / "runs"
     for summary in store.list_runs():
         assert (restored_runs / summary.record.id / "evidence").is_dir()
@@ -140,3 +140,46 @@ def test_restore_verification_detects_changed_file(
     assert verify_restored_backup(restored) == [
         f"hash ou tamanho diferente: {evidence.relative_to(restored).as_posix()}"
     ]
+
+
+def test_backup_restores_created_records_and_cleanup_state(
+    history_context: ProjectContext, tmp_path: Path, workdir: Path
+) -> None:
+    from lastro.browser.events import record_call
+    from lastro.browser.policy import Decision
+    from lastro.config.loader import load_project
+    from lastro.history import CleanupStatus, CreatedRecordInput
+
+    store = open_history(history_context)
+    run_id = store.create_run(history_context, TextMission("create")).record.id
+    for action, identifier in (("a1", "41"), ("a2", "42")):
+        record_call(store, run_id, action, "submit", {}, Decision("allow", "", ""))
+        store.record_created(
+            CreatedRecordInput(
+                run_id=run_id,
+                action_id=action,
+                entity="employee",
+                system_identifier=identifier,
+                tenant="acme",
+                expected_tenant="acme",
+            )
+        )
+    cleaned = store.list_created_records()[0]
+    store.mark_created_record_cleaned(cleaned.id)
+    before = store.list_created_records()
+    result = store.backup(tmp_path / "copia.zip")
+    restored_root = tmp_path / "restaurado"
+    with zipfile.ZipFile(result.archive) as opened:
+        opened.extractall(restored_root)
+
+    verify = workdir / "verificacao"
+    verify.mkdir()
+    config = history_context.config_path.read_text(encoding="utf-8")
+    config = config.replace(history_context.private_data_root.as_posix(), restored_root.as_posix())
+    (verify / "lastro.toml").write_text(config, encoding="utf-8")
+    restored = open_history(load_project(verify / "lastro.toml", "homolog", cwd=verify))
+
+    assert restored.list_created_records() == before
+    statuses = {record.id: record.cleanup_status for record in before}
+    assert statuses[cleaned.id] == CleanupStatus.CLEANED_MANUALLY
+    assert sorted(statuses.values()) == [CleanupStatus.CLEANED_MANUALLY, CleanupStatus.PENDING]
