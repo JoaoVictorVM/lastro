@@ -112,6 +112,7 @@ def healthy_project(
     )
     (workdir / PERMISSION_FILE).parent.mkdir()
     (workdir / PERMISSION_FILE).write_text("{}", encoding="utf-8")
+    materialize_bundle(workdir)
     return workdir
 
 
