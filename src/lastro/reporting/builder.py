@@ -449,9 +449,10 @@ class ReportBuilder:
         except Exception as error:
             return self._fallback(snapshot, data, kind, error, started)
         try:
-            report = self._store(run_id, REPORT_PATHS[kind], rendered)
+            report = self.store_report(run_id, REPORT_PATHS[kind], rendered)
             issue_ids = tuple(
-                self._store(run_id, f"{ISSUES_DIR}/{item.id}.md", text).id for item, text in issues
+                self.store_report(run_id, f"{ISSUES_DIR}/{item.id}.md", text).id
+                for item, text in issues
             )
         except Exception as error:
             self.history.close_report_snapshot(
@@ -485,7 +486,7 @@ class ReportBuilder:
         raw: dict[str, Any] = {"error": detail, "report": asdict(data)}
         fallback_id: str | None = None
         try:
-            artifact = self._store(
+            artifact = self.store_report(
                 data.run_id,
                 FALLBACK_PATHS.get(kind, "report.fallback.json"),
                 json.dumps(raw, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -505,7 +506,7 @@ class ReportBuilder:
         )
         return self._outcome(closed, data)
 
-    def _store(self, run_id: str, relative: str, text: str) -> ArtifactRecord:
+    def store_report(self, run_id: str, relative: str, text: str) -> ArtifactRecord:
         """Registra o arquivo uma única vez; conteúdo igual reaproveita, diferente é erro."""
         content = text.encode("utf-8")
         digest = hashlib.sha256(content).hexdigest()

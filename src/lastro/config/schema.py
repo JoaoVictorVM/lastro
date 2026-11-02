@@ -279,6 +279,8 @@ class Profile(BaseModel):
     login_url: HttpUrlText
     tenant_id: NonEmptyText
     tenant_display_name: str | None = None
+    # Somente alvos sem dados reais (como o demo) podem exportar o relatório sem redação.
+    public: bool = False
     credentials: Credentials
     version_endpoint: Annotated[str, AfterValidator(_version_endpoint)] | None = None
     allowed_entities: list[NonEmptyText]
