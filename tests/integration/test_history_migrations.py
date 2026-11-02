@@ -115,7 +115,7 @@ def test_failed_migration_leaves_database_unchanged(tmp_path: Path) -> None:
     apply_migrations(database)
     before = _schema(path)
     broken = Migration(
-        version=5,
+        version=6,
         name="broken",
         statements=(
             "CREATE TABLE extra (id TEXT PRIMARY KEY)",
@@ -127,13 +127,13 @@ def test_failed_migration_leaves_database_unchanged(tmp_path: Path) -> None:
     with pytest.raises(MigrationError) as info:
         apply_migrations(database, [*MIGRATIONS, broken])
 
-    assert info.value.version == 5
+    assert info.value.version == 6
     assert str(info.value).startswith(
-        "A migração 5 do banco falhou; o banco não foi alterado. "
+        "A migração 6 do banco falhou; o banco não foi alterado. "
         "Execute 'lastro backup' e reporte o problema."
     )
     assert _schema(path) == before
-    assert schema_version(database) == 4
+    assert schema_version(database) == 5
 
 
 def test_failed_first_migration_leaves_empty_database_without_version(tmp_path: Path) -> None:
@@ -159,7 +159,7 @@ def test_changed_published_migration_is_refused(tmp_path: Path) -> None:
 
 def test_unknown_newer_version_is_refused(tmp_path: Path) -> None:
     database = Database(tmp_path / "history.sqlite")
-    newer = Migration(version=5, name="newer", statements=("CREATE TABLE newer (id TEXT)",))
+    newer = Migration(version=6, name="newer", statements=("CREATE TABLE newer (id TEXT)",))
     apply_migrations(database, [*MIGRATIONS, newer])
 
     with pytest.raises(MigrationError, match="desconhecida"):
@@ -180,7 +180,7 @@ def test_oracle_migration_preserves_existing_runs(
             "SELECT checksum_sha256 FROM schema_migrations WHERE version = 1"
         ).fetchone()[0]
     )
-    assert apply_migrations(database) == [2, 3, 4]
+    assert apply_migrations(database) == [2, 3, 4, 5]
     assert (
         database.read(
             lambda conn: conn.execute(
@@ -240,7 +240,7 @@ def test_created_record_action_index_preserves_v001_rows(
     _insert_created(database, record.id, "legacy-2", "{}")
     _insert_created(database, record.id, "legacy-3", '{"action_id": 7}')
 
-    assert apply_migrations(database) == [3, 4]
+    assert apply_migrations(database) == [3, 4, 5]
 
     with database.connection() as conn:
         rows = conn.execute("SELECT id FROM created_records ORDER BY id").fetchall()
@@ -295,7 +295,7 @@ def test_mission_migration_preserves_existing_runs_and_criteria(
         ).fetchall()
     )
 
-    assert apply_migrations(database) == [4]
+    assert apply_migrations(database, MIGRATIONS[:4]) == [4]
 
     with database.connection() as conn:
         assert conn.execute("SELECT id FROM criteria").fetchall()[0]["id"] == "legacy"

@@ -91,3 +91,20 @@ class MissionPlanError(HistoryError):
         super().__init__(f"{code}: {detail}")
         self.code = code
         self.detail = detail
+
+
+EVIDENCE_OUTSIDE_RUN = "Evidence must belong to this run."
+CONFIRMED_NEEDS_EVIDENCE = "A confirmed finding needs at least 1 evidence reference."
+
+
+class ReportingError(HistoryError):
+    """Achado, resultado de critério ou relatório rejeitado; code é estável para o MCP."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
+class ReportConflictError(HistoryError):
+    """Um snapshot pronto difere das entradas atuais; o arquivo existente nunca é sobrescrito."""

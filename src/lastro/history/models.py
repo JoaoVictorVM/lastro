@@ -6,6 +6,8 @@ from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urljoin
 
+from lastro.oracles.models import OracleSignal
+
 MAX_MISSION_TEXT_LENGTH = 10_000
 MAX_PREVIEW_LENGTH = 200
 DEFAULT_HISTORY_LIMIT = 20
@@ -388,3 +390,229 @@ class HeuristicCheck:
     outcome: str
     actions: tuple[ActionReference, ...]
     note: str
+
+
+MAX_FINDING_TITLE_LENGTH = 120
+MAX_FINDING_FLOW_LENGTH = 200
+MAX_FINDING_TEXT_LENGTH = 4000
+MAX_FINDING_PRECONDITIONS = 20
+MAX_FINDING_STEPS = 30
+MAX_EVIDENCE_REFERENCES = 20
+NOT_EVALUATED_REASON = "not_evaluated"
+
+
+class FindingClassification(StrEnum):
+    SUSPECTED = "suspected"
+    CONFIRMED = "confirmed"
+    INCONCLUSIVE = "inconclusive"
+
+
+class FailureDomain(StrEnum):
+    SYSTEM = "system"
+    AGENT = "agent"
+    TOOL = "tool"
+
+
+class FindingOrigin(StrEnum):
+    AGENT = "agent"
+    ORACLE = "oracle"
+
+
+class ExpectedSource(StrEnum):
+    MISSION_CRITERION = "mission_criterion"
+    DOCUMENTATION = "documentation"
+    USER_ANSWER = "user_answer"
+    HEURISTIC = "heuristic"
+    COMMON_CONVENTION = "common_convention"
+
+
+class EvidencePurpose(StrEnum):
+    STATE = "state"
+    BEFORE = "before"
+    AFTER = "after"
+    ERROR = "error"
+    TIMING = "timing"
+
+
+class SeveritySuggestion(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class ReproductionOutcome(StrEnum):
+    REPRODUCED = "reproduced"
+    NOT_REPRODUCED = "not_reproduced"
+    INCONCLUSIVE = "inconclusive"
+
+
+class CriterionOutcome(StrEnum):
+    MET = "met"
+    NOT_MET = "not_met"
+    BLOCKED = "blocked"
+    INCONCLUSIVE = "inconclusive"
+
+
+class ResultSource(StrEnum):
+    AGENT = "agent"
+    SYSTEM = "system"
+
+
+class ReportKind(StrEnum):
+    FINAL = "final"
+    PARTIAL = "partial"
+    PUBLIC = "public"
+
+
+class SnapshotStatus(StrEnum):
+    PENDING = "pending"
+    READY = "ready"
+    FALLBACK = "fallback"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class EvidenceReference:
+    artifact_id: str
+    purpose: EvidencePurpose
+
+
+@dataclass(frozen=True)
+class FindingDraft:
+    """Achado já validado pelo contrato da tool; proveniência vem sempre da run."""
+
+    title: str
+    flow: str
+    preconditions: tuple[str, ...]
+    steps: tuple[str, ...]
+    expected: str
+    expected_source: ExpectedSource
+    expected_source_ref: str | None
+    observed: str
+    evidence: tuple[EvidenceReference, ...]
+    classification: FindingClassification
+    limitations: tuple[str, ...]
+    failure_domain: FailureDomain
+    severity_suggestion: SeveritySuggestion | None = None
+    origin: FindingOrigin = FindingOrigin.AGENT
+    action_id: str | None = None
+
+
+@dataclass(frozen=True)
+class FindingEvidence:
+    artifact_id: str
+    purpose: EvidencePurpose
+    relative_path: str
+    artifact_type: ArtifactType
+    sha256: str
+
+
+@dataclass(frozen=True)
+class ReproductionAttempt:
+    id: str
+    finding_id: str
+    child_run_id: str
+    outcome: ReproductionOutcome
+    evidence_artifact_ids: tuple[str, ...]
+    executor: str
+    attempted_at: str
+
+
+@dataclass(frozen=True)
+class Finding:
+    id: str
+    run_id: str
+    title: str
+    flow: str
+    preconditions: tuple[str, ...]
+    steps: tuple[str, ...]
+    expected: str
+    expected_source: ExpectedSource
+    expected_source_ref: str | None
+    observed: str
+    evidence: tuple[FindingEvidence, ...]
+    classification: FindingClassification
+    limitations: tuple[str, ...]
+    origin: FindingOrigin
+    failure_domain: FailureDomain
+    severity_suggestion: SeveritySuggestion | None
+    environment_url: str
+    tenant: str
+    system_version: str | None
+    fingerprint: str
+    action_id: str | None
+    version: int
+    reproduction_attempts: tuple[ReproductionAttempt, ...]
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class FindingSubmission:
+    finding: Finding
+    created: bool
+
+
+@dataclass(frozen=True)
+class CriterionResultDraft:
+    criterion_id: str
+    outcome: CriterionOutcome
+    evidence_artifact_ids: tuple[str, ...]
+    note: str
+    reason: str
+    source: ResultSource = ResultSource.AGENT
+
+
+@dataclass(frozen=True)
+class CriterionResult:
+    id: str
+    run_id: str
+    criterion_id: str
+    revision: int
+    outcome: CriterionOutcome
+    evidence_artifact_ids: tuple[str, ...]
+    note: str
+    source: ResultSource
+    reason: str
+    content_sha256: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class CriterionSubmission:
+    result: CriterionResult
+    created: bool
+
+
+@dataclass(frozen=True)
+class ReportSnapshot:
+    id: str
+    run_id: str
+    kind: ReportKind
+    input_sha256: str
+    status: SnapshotStatus
+    report_artifact_id: str | None
+    fallback_artifact_id: str | None
+    issue_artifact_ids: tuple[str, ...]
+    integrity_valid: bool | None
+    error_text: str | None
+    termination_reason: str | None
+    duration_ms: int | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class ReportInputs:
+    """Leitura consistente de tudo que o relatório projeta, numa única transação."""
+
+    run: RunRecord
+    events: tuple[EventRecord, ...]
+    artifacts: tuple[ArtifactRecord, ...]
+    findings: tuple[Finding, ...]
+    criterion_results: tuple[CriterionResult, ...]
+    plan: MissionPlan | None
+    clarifications: tuple[Clarification, ...]
+    created_records: tuple[CreatedRecord, ...]
+    oracle_signals: tuple[OracleSignal, ...]
