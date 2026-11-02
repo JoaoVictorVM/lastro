@@ -5,8 +5,8 @@ import contextlib
 import os
 import time
 from collections.abc import Callable
-from typing import Any
-from urllib.parse import urlsplit
+from typing import Any, cast
+from urllib.parse import urljoin, urlsplit
 
 from playwright.async_api import (
     Browser,
@@ -28,8 +28,52 @@ from lastro.browser.provenance import Provenance
 from lastro.config.loader import ProjectContext
 from lastro.config.policy import safe_path
 from lastro.config.schema import is_same_origin
-from lastro.history import CreatedRecordInput, EventType, HistoryStore, RunStatus
+from lastro.history import (
+    UNKNOWN_IDENTIFIER,
+    CreatedRecordInput,
+    EventType,
+    HistoryStore,
+    RunStatus,
+)
+from lastro.history.redaction import preview, redact_text
 from lastro.oracles.collector import OracleCollector
+
+MAX_IDENTIFIER_LENGTH = 256
+
+
+def is_creation(expected: ExpectedRequest, method: str, status: int) -> bool:
+    # Somente POST 2xx vinculado a um binding create prova que o registro existe.
+    contract = expected.binding.request
+    return (
+        expected.binding.operation == "create"
+        and contract is not None
+        and contract.method == "POST"
+        and method == "POST"
+        and expected.used
+        and 200 <= status < 300
+    )
+
+
+def json_value(data: object, path: str) -> object:
+    for key in path.split("."):
+        if not isinstance(data, dict):
+            return None
+        data = cast(dict[str, object], data).get(key)
+    return data
+
+
+def identifier_value(value: object) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, str | int):
+        return None
+    text = str(value)
+    if (
+        not text
+        or text != text.strip()
+        or len(text) > MAX_IDENTIFIER_LENGTH
+        or text == UNKNOWN_IDENTIFIER
+    ):
+        return None
+    return text
 
 
 class BrowserSession:
@@ -54,6 +98,7 @@ class BrowserSession:
         self.crashed = False
         self.needs_refresh = False
         self.network_denial: str | None = None
+        self.tenant_mismatch: str | None = None
         self.request_actions: dict[Request, ExpectedRequest] = {}
         self.provenance = Provenance(history, run_id, project.profile)
         self.lock = asyncio.Lock()
@@ -224,7 +269,9 @@ class BrowserSession:
 
     def request_failed(self, request: Request) -> None:
         reason = self.aborted.pop(request, None)
-        self.request_actions.pop(request, None)
+        expected = self.request_actions.pop(request, None)
+        if expected is not None:
+            expected.completed.set()
         self.oracles.capture(
             "requestfailed",
             page=self.request_page(request),
@@ -380,37 +427,9 @@ class BrowserSession:
             self.expected = None
         try:
             self.active()
-            if expected is not None:
-                binding = expected.binding
-                contract = binding.request
-                if (
-                    binding.operation == "create"
-                    and contract is not None
-                    and response.status == contract.success_status
-                ):
-                    record: object = None
-                    if contract.location_id:
-                        from urllib.parse import urljoin
-
-                        location = urljoin(response.url, response.headers.get("location", ""))
-                        if is_same_origin(location, self.project.profile.target_url):
-                            record = urlsplit(location).path.rstrip("/").rsplit("/", 1)[-1]
-                    elif contract.response_id:
-                        data: Any = await response.json()
-                        for key in contract.response_id.split("."):
-                            data = data[key]
-                        record = data
-                    if isinstance(record, str | int) and not isinstance(record, bool):
-                        self.provenance.record(
-                            CreatedRecordInput(
-                                run_id=self.run_id,
-                                action_id=expected.action_id,
-                                entity=binding.entity,
-                                system_identifier=str(record),
-                                tenant=self.project.profile.tenant_id,
-                                expected_tenant=self.project.profile.tenant_id,
-                            )
-                        )
+            mismatch: str | None = None
+            if expected is not None and is_creation(expected, request.method, response.status):
+                mismatch = await self.capture_creation(response, expected)
             self.history.append_event(
                 self.run_id,
                 EventType.POLICY_DECISION,
@@ -423,8 +442,70 @@ class BrowserSession:
                     "action_id": action_id,
                 },
             )
+            if mismatch is not None:
+                self.block_tenant(mismatch)
         except Exception:
             self.policy.locks.add("history")
+        finally:
+            if expected is not None:
+                expected.completed.set()
+
+    async def capture_creation(self, response: Response, expected: ExpectedRequest) -> str | None:
+        """Rastreia a criação pela resposta real; retorna o tenant observado se divergir."""
+        binding = expected.binding
+        contract = binding.request
+        assert contract is not None
+        profile = self.project.profile
+        body: object = None
+        if contract.response_id or contract.response_tenant:
+            with contextlib.suppress(Exception):
+                body = await response.json()
+        identifier: str | None = None
+        if contract.location_id:
+            location = urljoin(response.url, response.headers.get("location", ""))
+            if response.headers.get("location") and is_same_origin(location, profile.target_url):
+                identifier = identifier_value(urlsplit(location).path.rstrip("/").rsplit("/")[-1])
+        elif contract.response_id:
+            identifier = identifier_value(json_value(body, contract.response_id))
+        observed = (
+            identifier_value(json_value(body, contract.response_tenant))
+            if contract.response_tenant
+            else None
+        )
+        tenant = observed or profile.tenant_id
+        settings = profile.test_data.for_entity(binding.entity)
+        self.provenance.record(
+            CreatedRecordInput(
+                run_id=self.run_id,
+                action_id=expected.action_id,
+                entity=binding.entity,
+                system_identifier=identifier,
+                tenant=tenant,
+                expected_tenant=profile.tenant_id,
+                cleanup_required=settings.cleanup_required,
+                detail_path=settings.detail_for(identifier) if identifier else None,
+                cleanup_instructions=settings.cleanup_instructions,
+                unexpected_success_status=None
+                if response.status == contract.success_status
+                else response.status,
+            )
+        )
+        return tenant if tenant != profile.tenant_id else None
+
+    def block_tenant(self, tenant: str) -> None:
+        self.policy.locks.add("tenant")
+        shown = preview(self.sanitize(redact_text(tenant)), 80)
+        self.tenant_mismatch = (
+            f"Record created in unexpected tenant '{shown}'. "
+            "Writes stopped; verify and clean up manually."
+        )
+        self.history.append_event(
+            self.run_id,
+            EventType.POLICY_DECISION,
+            policy_decision="deny",
+            payload={"reason": "tenant_mismatch", "observed_tenant": shown},
+        )
+        self.history.finish_run(self.run_id, RunStatus.BLOCKED, self.tenant_mismatch)
 
     async def close_context(self) -> None:
         self.closing_context = True

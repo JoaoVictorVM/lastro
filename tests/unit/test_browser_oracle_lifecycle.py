@@ -29,7 +29,7 @@ def test_request_completion_preserves_creation_proof(history_context: ProjectCon
     url = history_context.profile.target_url + "/api/employees"
     response = Mock(request=request, status=201, url=url)
     response.json = AsyncMock(return_value={"id": "new-employee"})
-    session.request_actions[request] = ExpectedRequest(binding, url, {}, "create-action")
+    session.request_actions[request] = ExpectedRequest(binding, url, {}, "create-action", used=True)
     record_call(history, run_id, "create-action", "submit", {}, Decision("allow", "", ""))
 
     async def scenario() -> None:

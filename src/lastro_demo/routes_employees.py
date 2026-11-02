@@ -111,7 +111,11 @@ async def create(request: Request, ctx: TenantDep) -> Response:
             employee=None,
             status_code=outcome.status_code,
         )
-    return _saved_page(request, ctx, outcome)
+    response = _saved_page(request, ctx, outcome)
+    if outcome.employee is not None:
+        # O id do registro criado fica disponível para quem rastreia criações pela resposta.
+        response.headers["Location"] = f"/employees/{outcome.employee.id}"
+    return response
 
 
 @router.get("/employees/{employee_id}")

@@ -12,6 +12,7 @@ from lastro.browser.control import HumanControl
 from lastro.browser.tools import NO_RUN, TOOLS, Arguments, BrowserTools
 from lastro.config.loader import load_project
 from lastro.history import open_history
+from lastro.testdata import TestDataRequest
 
 
 async def serve(profile: str | None = None) -> None:
@@ -27,7 +28,9 @@ async def serve(profile: str | None = None) -> None:
             Tool(
                 name=name,
                 description="Run-scoped Lastro tool: " + name,
-                inputSchema=Arguments.model_json_schema(),
+                inputSchema=TestDataRequest.model_json_schema()
+                if name == "generate_test_data"
+                else Arguments.model_json_schema(),
             )
             for name in TOOLS
         ]
