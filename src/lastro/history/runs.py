@@ -79,6 +79,15 @@ def _read_mission_file(path: Path) -> bytes:
         raise InvalidMissionError(f"não foi possível ler a missão {path}: {exc}") from None
     if not data.strip():
         raise InvalidMissionError(f"o arquivo de missão está vazio: {path}")
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise InvalidMissionError(f"o arquivo de missão deve estar em UTF-8: {path}") from None
+    # Quebras CRLF do editor não consomem o limite de caracteres da missão.
+    if len(text.replace("\r\n", "\n")) > MAX_MISSION_TEXT_LENGTH:
+        raise InvalidMissionError(
+            f"o arquivo de missão aceita até {MAX_MISSION_TEXT_LENGTH} caracteres: {path}"
+        )
     return data
 
 

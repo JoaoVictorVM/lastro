@@ -82,3 +82,12 @@ class CreatedRecordNotFoundError(HistoryError):
 
 class CleanupTransitionError(HistoryError):
     pass
+
+
+class MissionPlanError(HistoryError):
+    """Plano, referência ou integridade da missão rejeitados; code é estável para o MCP."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(f"{code}: {detail}")
+        self.code = code
+        self.detail = detail

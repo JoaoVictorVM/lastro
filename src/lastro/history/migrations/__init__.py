@@ -15,6 +15,7 @@ from lastro.history.migrations import (
     v001_initial,
     v002_oracle_signals,
     v003_created_record_actions,
+    v004_mission_plans,
 )
 from lastro.timeutil import utc_now_iso
 
@@ -48,6 +49,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration.from_module(v001_initial),
     Migration.from_module(v002_oracle_signals),
     Migration.from_module(v003_created_record_actions),
+    Migration.from_module(v004_mission_plans),
 )
 
 

@@ -19,6 +19,26 @@ MAX_QUESTION_LENGTH = 1000
 MAX_OPTION_LENGTH = 500
 PLAN_SCHEMA_VERSION = 1
 
+# Ferramentas que tocam o alvo; exigem plano ativo sem lacuna bloqueante.
+EXPLORATION_TOOLS = frozenset(
+    {
+        "observe",
+        "navigate",
+        "click",
+        "fill",
+        "select",
+        "submit",
+        "screenshot",
+        "wait_for",
+        "generate_test_data",
+        "report_finding",
+    }
+)
+# Ações com efeito observável no browser; um check precisa de ao menos uma delas.
+BROWSER_ACTIONS = frozenset(
+    {"observe", "navigate", "click", "fill", "select", "submit", "screenshot", "wait_for"}
+)
+
 _SPACES = re.compile(r"\s+")
 
 

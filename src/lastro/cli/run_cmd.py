@@ -16,6 +16,8 @@ from lastro.history import (
     Mission,
     TextMission,
 )
+from lastro.mission import BundleError, instruction_problems, verify_bundle
+from lastro.scaffold.files import executor_spec
 
 USAGE_EXIT_CODE = 2
 MISSION_SOURCE_MESSAGE = (
@@ -41,6 +43,23 @@ def mission_from_options(text: str | None, file: Path | None) -> Mission | None:
     if file is not None and text is None:
         return FileMission(file)
     return None
+
+
+def _bundle_hash(project_dir: Path, executor: str) -> str:
+    """Hash do bundle local; sem bundle íntegro e instruções que o referenciem, não há run."""
+    try:
+        bundle = verify_bundle(project_dir)
+    except BundleError as exc:
+        output.error(str(exc))
+        raise typer.Exit(code=USAGE_EXIT_CODE) from None
+    instructions = project_dir / executor_spec(executor).instruction_file
+    problems = instruction_problems(instructions, check_length=False)
+    if problems:
+        output.error(
+            f"Instruções do executor inválidas: {'; '.join(problems)}; rode 'lastro init'."
+        )
+        raise typer.Exit(code=USAGE_EXIT_CODE)
+    return bundle.sha256
 
 
 run_app = typer.Typer(
@@ -71,9 +90,10 @@ def start(
         raise typer.Exit(code=USAGE_EXIT_CODE)
     state = get_state(ctx)
     project = state.require_history_project()
+    bundle_hash = _bundle_hash(project.loaded.project_dir, project.config.executor)
     store = state.open_history(project)
     try:
-        created = store.create_run(project, chosen)
+        created = store.create_run(project, chosen, skill_bundle_version=bundle_hash)
     except HistoryError as exc:
         output.error(str(exc))
         raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None

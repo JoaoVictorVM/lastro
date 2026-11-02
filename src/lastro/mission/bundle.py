@@ -86,7 +86,7 @@ def verify_bundle(project_dir: Path) -> LocalBundle:
     return LocalBundle(directory=directory, sha256=bundle_hash(contents))
 
 
-def instruction_problems(path: Path) -> list[str]:
+def instruction_problems(path: Path, *, check_length: bool = True) -> list[str]:
     """Problemas do arquivo de instruções do executor; lista vazia quando está adequado."""
     try:
         text = path.read_text(encoding="utf-8")
@@ -96,6 +96,6 @@ def instruction_problems(path: Path) -> list[str]:
     missing = [reference for reference in instruction_references() if reference not in text]
     if missing:
         problems.append(f"{path.name} não referencia " + ", ".join(missing))
-    if len(text.splitlines()) > INSTRUCTION_MAX_LINES:
+    if check_length and len(text.splitlines()) > INSTRUCTION_MAX_LINES:
         problems.append(f"{path.name} excede {INSTRUCTION_MAX_LINES} linhas")
     return problems

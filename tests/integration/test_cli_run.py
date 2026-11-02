@@ -137,3 +137,57 @@ def test_run_start_prints_id_and_folder_for_selected_profile(
         f"Run: {summary.record.id}",
         f"Pasta: {local.project_data_dir / 'runs' / summary.record.id}",
     ]
+
+
+def test_run_stores_local_bundle_hash(runner: CliRunner, history_context: ProjectContext) -> None:
+    from lastro.mission import verify_bundle
+
+    result = runner.invoke(app, ["--profile", "homolog", "run", "start", "--mission", "Explore"])
+
+    assert result.exit_code == 0, result.output
+    (summary,) = open_history(history_context).list_runs()
+    expected = verify_bundle(history_context.loaded.project_dir).sha256
+    assert summary.record.skill_bundle_version == expected
+    assert len(expected) == 64
+
+
+@pytest.mark.parametrize("damage", ["skill", "manifest", "instructions"])
+def test_inconsistent_bundle_prevents_run(
+    runner: CliRunner, history_context: ProjectContext, workdir: Path, damage: str
+) -> None:
+    bundle = workdir / "skills" / "lastro"
+    if damage == "skill":
+        (bundle / "qa-heuristics.md").write_text("# Alterado\n", encoding="utf-8")
+    elif damage == "manifest":
+        (bundle / "manifest.json").unlink()
+    else:
+        (workdir / "CLAUDE.md").write_text("# Sem referência ao bundle\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["--profile", "homolog", "run", "start", "--mission", "Explore"])
+
+    assert result.exit_code == 2
+    assert "lastro init" in result.stderr
+    assert open_history(history_context).list_runs() == []
+
+
+def test_text_and_markdown_missions_accept_limit(
+    runner: CliRunner, history_context: ProjectContext, workdir: Path
+) -> None:
+    base = ["--profile", "homolog", "run", "start"]
+    template = workdir / "missions" / "employee.md"
+    template.parent.mkdir()
+    template.write_text("# Objetivo\n" + "x" * (10_000 - 11), encoding="utf-8")
+    too_long = workdir / "missions" / "long.md"
+    too_long.write_text("# Objetivo\n" + "y" * 10_000, encoding="utf-8")
+
+    text = runner.invoke(app, [*base, "--mission", "é" * 10_000])
+    assert text.exit_code == 0, text.output
+    _finish_active(history_context)
+    markdown = runner.invoke(app, [*base, "--mission-file", "missions/employee.md"])
+    assert markdown.exit_code == 0, markdown.output
+    _finish_active(history_context)
+    rejected = runner.invoke(app, [*base, "--mission-file", "missions/long.md"])
+
+    assert rejected.exit_code == 1
+    assert "10000 caracteres" in rejected.stderr
+    assert len(open_history(history_context).list_runs()) == 2
