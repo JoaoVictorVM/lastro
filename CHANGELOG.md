@@ -27,6 +27,9 @@ list the intended scope and contain no shipped changes until their release date 
 - Scripted Playwright login per profile with credentials read only from the environment,
   private storage state reused for up to 8 hours, fail-closed tenant verification by API,
   cookie, signed JWT or page element, and `lastro auth check`.
+- `generate_test_data` browser tool with reproducible Brazilian test data marked with the run,
+  created-record tracking from create responses, and `lastro data pending` and
+  `lastro data mark-cleaned` for manual cleanup. Lastro never deletes target records.
 
 ## [1.0.0] - Planned
 

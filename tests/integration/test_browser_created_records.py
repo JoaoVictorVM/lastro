@@ -3,6 +3,7 @@ from collections.abc import Callable
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
+import pytest
 from playwright.async_api import Page
 
 from lastro.browser.bindings import ExpectedRequest
@@ -225,3 +226,60 @@ def test_demo_create_persists_response_identifier(
             await runtime.session.close()
 
     asyncio.run(scenario())
+
+
+def test_f03_f06_created_record_uses_run_and_captured_response(
+    make_auth_project: Callable[..., Any],
+) -> None:
+    from playwright.async_api import Response
+
+    from lastro.browser.demo import FIELDS, demo_policy, demo_test_data
+
+    project = make_auth_project().context()
+    project.profile.policy = demo_policy()
+    project.profile.test_data = demo_test_data()
+    project.profile.editable_fields = {"employee": list(FIELDS)}
+    history = open_history(project)
+    run = history.create_run(project, TextMission("Create one employee"))
+    runtime = BrowserTools(project, history, run.record.id)
+    base = project.profile.target_url
+    locations: list[str] = []
+
+    def capture(response: Response) -> None:
+        if response.request.method == "POST":
+            locations.append(response.headers.get("location", ""))
+
+    async def scenario() -> None:
+        try:
+            values = (await runtime.call("generate_test_data", {"entity": "employee"}))["values"]
+            await runtime.call("navigate", {"url": base + "/employees/new"})
+            assert runtime.session.context is not None
+            runtime.session.context.on("response", capture)
+            for label, key in (
+                ("Nome completo", "name"),
+                ("CPF", "cpf"),
+                ("E-mail", "email"),
+                ("Data de admissão", "hire_date"),
+            ):
+                await runtime.call("fill", {"target": {"label": label}, "value": values[key]})
+            await runtime.call("select", {"target": {"label": "Perfil"}, "value": "medico"})
+            result = await runtime.call("submit", {"target": {"role": "button", "name": "Salvar"}})
+            assert result == {"status": "ok"}, result
+        finally:
+            await runtime.session.close()
+
+    asyncio.run(scenario())
+    (record,) = history.list_created_records(run_id=run.record.id)
+    assert record.run_id == run.record.id
+    assert locations == [f"/employees/{record.system_identifier}"]
+    submit = next(
+        event
+        for event in history.list_events(run.record.id)
+        if event.event_type == EventType.TOOL_CALL and event.tool_name == "submit"
+    )
+    assert record.action_id == submit.correlation_id
+
+
+@pytest.mark.skip(reason="integração de relatório pendente até existir o report builder")
+def test_report_created_records_lists_every_record_with_identifier() -> None:
+    pass

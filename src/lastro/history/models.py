@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
+from urllib.parse import urljoin
 
 MAX_MISSION_TEXT_LENGTH = 10_000
 MAX_PREVIEW_LENGTH = 200
@@ -245,6 +246,7 @@ class CreatedRecord:
     id: str
     run_id: str
     profile: str
+    environment_url: str
     entity_type: str
     system_identifier: str
     tenant: str
@@ -258,6 +260,12 @@ class CreatedRecord:
     cleanup_instructions: str | None
     warnings: tuple[str, ...]
     unexpected_success_status: int | None
+
+    @property
+    def detail_url(self) -> str | None:
+        if self.detail_path is None:
+            return None
+        return urljoin(self.environment_url, self.detail_path)
 
 
 @dataclass(frozen=True)

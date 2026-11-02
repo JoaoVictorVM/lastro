@@ -32,7 +32,8 @@ COLLISION = "identifier_collision"
 UNEXPECTED_STATUS = "unexpected_success_status"
 
 _SELECT = (
-    "SELECT r.*, runs.profile AS run_profile FROM created_records r "
+    "SELECT r.*, runs.profile AS run_profile, runs.environment_url AS run_environment_url "
+    "FROM created_records r "
     "JOIN runs ON runs.id = r.run_id WHERE runs.project_id = ?"
 )
 
@@ -64,6 +65,7 @@ def from_row(row: sqlite3.Row) -> CreatedRecord:
         id=row["id"],
         run_id=row["run_id"],
         profile=row["run_profile"],
+        environment_url=row["run_environment_url"],
         entity_type=row["entity_type"],
         system_identifier=row["system_identifier"],
         tenant=row["tenant"],
@@ -230,7 +232,7 @@ def select_created_records(
         if value is not None:
             query += f" AND {column} = ?"
             params.append(value)
-    query += " ORDER BY r.created_at, r.id"
+    query += " ORDER BY r.created_at, json_extract(r.payload_json, '$.event_id'), r.id"
     return [from_row(row) for row in conn.execute(query, params)]
 
 

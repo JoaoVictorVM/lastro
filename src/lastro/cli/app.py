@@ -10,6 +10,7 @@ from lastro import get_version
 from lastro.cli import (
     auth_cmd,
     backup_cmd,
+    data_cmd,
     demo_cmd,
     doctor_cmd,
     history_cmd,
@@ -72,6 +73,7 @@ app.command(name="tail")(tail_cmd.tail)
 app.add_typer(history_cmd.history_app, name="history")
 app.command(name="backup")(backup_cmd.backup)
 app.add_typer(auth_cmd.auth_app, name="auth")
+app.add_typer(data_cmd.data_app, name="data")
 stubs.register(app)
 
 
