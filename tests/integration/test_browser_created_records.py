@@ -194,11 +194,11 @@ def test_demo_create_persists_response_identifier(
             ("Data de admissão", values["hire_date"]),
         ):
             result = await runtime.call("fill", {"target": {"label": label}, "value": value})
-            assert result == {"status": "ok"}, result
+            assert result["status"] == "ok", result
         result = await runtime.call("select", {"target": {"label": "Perfil"}, "value": "medico"})
-        assert result == {"status": "ok"}, result
+        assert result["status"] == "ok", result
         result = await runtime.call("submit", {"target": {"role": "button", "name": "Salvar"}})
-        assert result == {"status": "ok"}, result
+        assert result["status"] == "ok", result
         return values["name"]
 
     async def scenario() -> None:
@@ -220,7 +220,7 @@ def test_demo_create_persists_response_identifier(
             result = await runtime.call(
                 "fill", {"target": {"label": "Telefone"}, "value": "(11) 91234-5678"}
             )
-            assert result == {"status": "ok"}, result
+            assert result["status"] == "ok", result
             assert not any(method == "DELETE" for method, _ in demo_server.access_log)
         finally:
             await runtime.session.close()
@@ -264,7 +264,7 @@ def test_f03_f06_created_record_uses_run_and_captured_response(
                 await runtime.call("fill", {"target": {"label": label}, "value": values[key]})
             await runtime.call("select", {"target": {"label": "Perfil"}, "value": "medico"})
             result = await runtime.call("submit", {"target": {"role": "button", "name": "Salvar"}})
-            assert result == {"status": "ok"}, result
+            assert result["status"] == "ok", result
         finally:
             await runtime.session.close()
 

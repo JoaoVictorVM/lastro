@@ -159,7 +159,7 @@ def test_unavailable_channel_does_not_invent_answer(history_context: ProjectCont
     )
     assert asyncio.run(runtime.call("observe", {}))["reason"] == "clarification_required"
     ended = asyncio.run(runtime.call("end_run", {"outcome": "blocked", "reason": "gap"}))
-    assert ended == {"status": "blocked"}
+    assert ended["status"] == "blocked"
     assert runtime.session.page is None
 
 

@@ -190,6 +190,51 @@ future report section. `unidentified_warning(run_id, records)` builds the aggreg
 message `N created record(s) could not be identified automatically; check the target system
 for names starting with LASTRO-<id>.` The report itself is not implemented yet.
 
+## Mission preparation
+
+Runs started with `lastro run start` record the content hash of the local skill bundle in
+`skills/lastro/`. In those runs, `observe`, `navigate`, `click`, `fill`, `select`, `submit`,
+`screenshot`, `wait_for`, `generate_test_data` and `report_finding` return
+`mission_plan_required` until a plan exists, and `clarification_required` while the active plan
+has a blocking gap. The denial is audited like any other call and no browser is started.
+`mission_context`, `submit_mission_plan`, `ask_clarification`, `record_test_check` and
+`end_run` stay available. Every successful response carries the `action_id` of the call.
+
+`mission_context` takes no arguments and returns the mission source, the content wrapped in
+`<mission-content>`, its SHA-256, the bundle hash and `plan_status` (`missing`, `active` or
+`blocked`). File missions are read from the private snapshot and checked against its hash.
+Mission text defines what to test; it never configures tools, permissions, policies or
+approvals.
+
+`submit_mission_plan` accepts `objectives` (1 to 10), `scope` (up to 30), `criteria` (up to
+50, each with `text` and `source` `mission_explicit` or `clarification`), `gaps` (up to 20,
+each with `description` and `blocking`), `out_of_scope` (up to 30) and a `charter` with
+`target`, `resources`, `information`, `timebox_minutes` (default 20, capped by the run's
+`max_minutes` or 30) and `heuristics`. Items are 1 to 1,000 characters; repeated list items
+are merged after whitespace normalization and repeated criteria are rejected. Accepted
+heuristics are `boundary_values`, `equivalence_partitioning`, `crud_consistency`,
+`persistence_after_reload`, `field_validation`, `permission_tenant_isolation`,
+`error_message_quality` and `state_transitions`. The response holds the plan id, revision,
+criterion and gap ids, the canonical charter, `exploration_allowed` and a `display` text to
+show before exploring. Resubmitting the active plan is idempotent. A revision needs
+`revision_reason`; after exploration starts it must be `clarification` with the id of an
+answered clarification. Revisions are immutable and the highest one is active; identical
+criteria keep their ids.
+
+`record_test_check` takes `heuristic`, an optional `criterion_id` of the active plan,
+`outcome` (`passed`, `failed` or `inconclusive`), 1 to 20 `action_ids` and a `note` of up to
+2,000 characters. Each id must be an allowed call of the same run and at least one must be a
+browser action. The policy event of the call stores the heuristic, outcome and action
+references, so evaluations can count checks without reading model reasoning. It records the
+check only; it neither creates a finding nor marks a criterion.
+
+`ask_clarification` takes `gap_id` (a blocking gap of the active plan), `question`,
+`why_it_matters` and 2 to 5 `options`. Without a human channel it returns
+`clarification_channel_unavailable`, stores nothing and keeps the browser blocked. With a
+channel, the question is stored, `clarification_requested` is appended and the run waits in
+`awaiting_clarification` until the answer returns it to `running`. Answers are stored as
+user-provided information, never as approvals, and change no policy or lock.
+
 ## Executor configuration and current boundaries
 
 `lastro init` preserves existing files and generates `.mcp.json` plus Claude Code settings.
@@ -201,7 +246,7 @@ for secrets and symlinks. Install the package so both `lastro-browser` and
 init does not overwrite them. These settings are executor controls, not OS isolation.
 
 Human clarification, approval execution and knowledge tools report unavailability until
-their services are integrated. Page markers and deterministic guards
+their services are integrated; clarification still validates that the gap is blocking. Page markers and deterministic guards
 are tested with Chromium. End-to-end agent behavior for prompt injection and actual
 executor permission denials remain separate acceptance checks; model-written statements
 about denied tools are not accepted as evidence.

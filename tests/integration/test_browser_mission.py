@@ -90,9 +90,10 @@ def test_metadata_tools_remain_available_before_plan(history_context: ProjectCon
         {"heuristic": "boundary_values", "outcome": "passed", "action_ids": ["missing"]},
     )
     assert check["error"] == "invalid_reference"
-    assert call(runtime, "end_run", {"outcome": "blocked", "reason": "sem plano"}) == {
-        "status": "blocked"
-    }
+    assert (
+        call(runtime, "end_run", {"outcome": "blocked", "reason": "sem plano"})["status"]
+        == "blocked"
+    )
     tools = [tool for tool, _, _ in decisions(history, run_id)]
     assert tools == ["mission_context", "ask_clarification", "record_test_check", "end_run"]
 
@@ -147,11 +148,9 @@ def test_blocking_gap_requires_clarification(history_context: ProjectContext) ->
             "options": ["Celular com DDD", "Fixo com DDD"],
         },
     )
-    assert asked == {
-        "status": "unavailable",
-        "reason": "clarification_channel_unavailable",
-        "gap_id": gap_id,
-    }
+    assert asked["status"] == "unavailable"
+    assert asked["reason"] == "clarification_channel_unavailable"
+    assert asked["gap_id"] == gap_id
     assert history.list_clarifications(run_id) == []
     assert history.get_run(run_id).status.value == "running"
     assert call(runtime, "observe", {})["reason"] == "clarification_required"

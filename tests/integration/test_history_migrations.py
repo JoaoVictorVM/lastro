@@ -273,3 +273,51 @@ def test_duplicate_action_rejected(tmp_path: Path, history_context: ProjectConte
     with pytest.raises(sqlite3.IntegrityError):
         _insert_created(database, record.id, "second", '{"action_id": "a1"}')
     _insert_created(database, record.id, "other-action", '{"action_id": "a2"}')
+
+
+def test_mission_migration_preserves_existing_runs_and_criteria(
+    tmp_path: Path, history_context: ProjectContext
+) -> None:
+    database = Database(tmp_path / "history.sqlite")
+    apply_migrations(database, MIGRATIONS[:3])
+    record = open_history(history_context).create_run(history_context, TextMission("m")).record
+    database.write(lambda conn: insert_run(conn, record))
+    database.write(
+        lambda conn: conn.execute(
+            "INSERT INTO criteria (id, run_id, payload_json, created_at, updated_at) "
+            "VALUES ('legacy', ?, '{\"flow\":\"cadastro\"}', 'x', 'x')",
+            (record.id,),
+        )
+    )
+    checksums = database.read(
+        lambda conn: conn.execute(
+            "SELECT version, checksum_sha256 FROM schema_migrations ORDER BY version"
+        ).fetchall()
+    )
+
+    assert apply_migrations(database) == [4]
+
+    with database.connection() as conn:
+        assert conn.execute("SELECT id FROM criteria").fetchall()[0]["id"] == "legacy"
+        assert conn.execute("SELECT mission_text FROM runs").fetchone()[0] == "m"
+        tables = {row["name"] for row in conn.execute("SELECT name FROM sqlite_master")}
+        current = conn.execute(
+            "SELECT version, checksum_sha256 FROM schema_migrations WHERE version < 4 "
+            "ORDER BY version"
+        ).fetchall()
+    assert {"mission_plans", "clarifications", "idx_criteria_run_normalized"} <= tables
+    assert [tuple(row) for row in current] == [tuple(row) for row in checksums]
+
+
+def test_mission_migration_rolls_back_on_failure(tmp_path: Path) -> None:
+    database = Database(tmp_path / "history.sqlite")
+    apply_migrations(database, MIGRATIONS[:3])
+    before = _schema(database.path)
+    mission = MIGRATIONS[3]
+    broken = Migration(mission.version, mission.name, (*mission.statements, "SELECT * FROM x"))
+
+    with pytest.raises(MigrationError):
+        apply_migrations(database, [*MIGRATIONS[:3], broken])
+
+    assert _schema(database.path) == before
+    assert schema_version(database) == 3

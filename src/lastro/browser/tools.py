@@ -261,106 +261,112 @@ class BrowserTools:
             except Exception:
                 return {"error": NO_RUN}
             action_id = uuid.uuid4().hex
-            recorded = False
-            try:
-                blocked = self.gate(name)
-                if blocked is not None:
-                    record_call(
-                        self.history,
-                        self.run_id,
-                        action_id,
-                        name,
-                        {key: value for key, value in raw.items() if key != "value"},
-                        Decision("deny", blocked, ""),
-                    )
-                    return {"decision": "deny", "reason": blocked, "action_id": action_id}
-                if name in INPUT_MODELS:
-                    parsed = INPUT_MODELS[name].model_validate(raw)
-                    self.session.action_sequence = record_call(
-                        self.history,
-                        self.run_id,
-                        action_id,
-                        name,
-                        raw,
-                        Decision("allow", "metadata", ""),
-                        self.mission_details(parsed),
-                    )
-                    recorded = True
-                    self.active()
-                    return self.mission_tool(name, parsed, action_id)
-                if name == "generate_test_data":
-                    request = parse_request(raw)
-                    self.session.action_sequence = record_call(
-                        self.history,
-                        self.run_id,
-                        action_id,
-                        name,
-                        raw,
-                        Decision("allow", "metadata", ""),
-                    )
-                    recorded = True
-                    self.active()
-                    return self.test_data(request, action_id)
-                args = Arguments.model_validate(raw)
-                if name not in TOOLS:
-                    raise ValueError("Unknown tool")
-                decision = (
-                    self.session.policy.decide(Action("read"), False)
-                    if name in {"observe", "navigate", "screenshot", "wait_for"}
-                    else Decision("allow", "metadata", "")
-                )
-                operation: Any = None
-                if name in {"click", "fill", "select", "submit"}:
-                    operation, decision = await self.prepare(name, args, action_id)
-                elif name == "navigate" and (
-                    args.url is None
-                    or not is_same_origin(args.url, self.project.profile.target_url)
-                ):
-                    decision = Decision("deny", "outside_target", "")
-                self.session.action_sequence = record_call(
+            result = await self.dispatch(name, raw, action_id)
+            # O agente cita esses ids em record_test_check; sem eles a heurística não é provável.
+            if "error" not in result:
+                result.setdefault("action_id", action_id)
+            return result
+
+    async def dispatch(self, name: str, raw: dict[str, Any], action_id: str) -> dict[str, Any]:
+        recorded = False
+        try:
+            blocked = self.gate(name)
+            if blocked is not None:
+                record_call(
                     self.history,
                     self.run_id,
                     action_id,
                     name,
                     {key: value for key, value in raw.items() if key != "value"},
-                    decision,
+                    Decision("deny", blocked, ""),
+                )
+                return {"decision": "deny", "reason": blocked, "action_id": action_id}
+            if name in INPUT_MODELS:
+                parsed = INPUT_MODELS[name].model_validate(raw)
+                self.session.action_sequence = record_call(
+                    self.history,
+                    self.run_id,
+                    action_id,
+                    name,
+                    raw,
+                    Decision("allow", "metadata", ""),
+                    self.mission_details(parsed),
                 )
                 recorded = True
                 self.active()
-                if decision.effect != "allow":
-                    return {
-                        "decision": decision.effect,
-                        "reason": decision.reason,
-                        "fingerprint": decision.fingerprint,
-                        "action_id": action_id,
-                    }
-                if operation is not None:
-                    return await operation()
-                return await self.execute(name, args, action_id)
-            except MissionPlanError as error:
-                if not recorded:
-                    record_call(
-                        self.history,
-                        self.run_id,
-                        action_id,
-                        name,
-                        {},
-                        Decision("deny", error.code, ""),
-                    )
-                return {"error": error.code, "detail": error.detail}
-            except Exception as error:
-                if not recorded:
-                    record_call(
-                        self.history,
-                        self.run_id,
-                        action_id,
-                        name,
-                        {},
-                        Decision("deny", "invalid_action", ""),
-                    )
-                return {"error": untrusted(self.session.sanitize(str(error)))}
-            finally:
-                self.session.expected = None
+                return self.mission_tool(name, parsed, action_id)
+            if name == "generate_test_data":
+                request = parse_request(raw)
+                self.session.action_sequence = record_call(
+                    self.history,
+                    self.run_id,
+                    action_id,
+                    name,
+                    raw,
+                    Decision("allow", "metadata", ""),
+                )
+                recorded = True
+                self.active()
+                return self.test_data(request, action_id)
+            args = Arguments.model_validate(raw)
+            if name not in TOOLS:
+                raise ValueError("Unknown tool")
+            decision = (
+                self.session.policy.decide(Action("read"), False)
+                if name in {"observe", "navigate", "screenshot", "wait_for"}
+                else Decision("allow", "metadata", "")
+            )
+            operation: Any = None
+            if name in {"click", "fill", "select", "submit"}:
+                operation, decision = await self.prepare(name, args, action_id)
+            elif name == "navigate" and (
+                args.url is None or not is_same_origin(args.url, self.project.profile.target_url)
+            ):
+                decision = Decision("deny", "outside_target", "")
+            self.session.action_sequence = record_call(
+                self.history,
+                self.run_id,
+                action_id,
+                name,
+                {key: value for key, value in raw.items() if key != "value"},
+                decision,
+            )
+            recorded = True
+            self.active()
+            if decision.effect != "allow":
+                return {
+                    "decision": decision.effect,
+                    "reason": decision.reason,
+                    "fingerprint": decision.fingerprint,
+                    "action_id": action_id,
+                }
+            if operation is not None:
+                return await operation()
+            return await self.execute(name, args, action_id)
+        except MissionPlanError as error:
+            if not recorded:
+                record_call(
+                    self.history,
+                    self.run_id,
+                    action_id,
+                    name,
+                    {},
+                    Decision("deny", error.code, ""),
+                )
+            return {"error": error.code, "detail": error.detail}
+        except Exception as error:
+            if not recorded:
+                record_call(
+                    self.history,
+                    self.run_id,
+                    action_id,
+                    name,
+                    {},
+                    Decision("deny", "invalid_action", ""),
+                )
+            return {"error": untrusted(self.session.sanitize(str(error)))}
+        finally:
+            self.session.expected = None
 
     def gate(self, name: str) -> str | None:
         """Runs com bundle só tocam o alvo com plano ativo e sem lacuna bloqueante."""

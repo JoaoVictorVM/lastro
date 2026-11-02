@@ -107,7 +107,7 @@ def test_end_run_and_unavailable_clarification(make_auth_project: Callable[..., 
     result = asyncio.run(
         runtime.call("end_run", {"outcome": "completed", "reason": "Mission finished"})
     )
-    assert result == {"status": "completed"}
+    assert result["status"] == "completed"
     assert history.get_active_run() is None
     assert asyncio.run(runtime.call("observe", {}))["error"].startswith("No active run")
 

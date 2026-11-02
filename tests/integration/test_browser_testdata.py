@@ -65,4 +65,4 @@ def test_tool_call_ordinal_reproduces_after_reopen(history_context: ProjectConte
         generation_index=1,
         reference_date=date(2026, 11, 1),
     )
-    assert replay.model_dump() == employee
+    assert replay.model_dump() == {k: v for k, v in employee.items() if k != "action_id"}
