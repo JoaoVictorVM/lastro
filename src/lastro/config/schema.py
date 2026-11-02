@@ -19,6 +19,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from lastro.config.policy import BrowserPolicy, safe_path
+from lastro.config.testdata import TestDataSettings
 from lastro.oracles.ignore import OracleSettings
 
 DEFAULT_TIMEZONE = "America/Sao_Paulo"
@@ -290,6 +291,7 @@ class Profile(BaseModel):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     policy: BrowserPolicy = Field(default_factory=BrowserPolicy)
     oracles: OracleSettings = Field(default_factory=OracleSettings)
+    test_data: TestDataSettings = Field(default_factory=TestDataSettings)
 
     @field_validator("denied_endpoint_patterns")
     @classmethod
@@ -341,6 +343,25 @@ class Profile(BaseModel):
                     "expected API verification endpoint on the target_url origin",
                 )
         return value
+
+    @model_validator(mode="after")
+    def _test_data_entities(self) -> Self:
+        created = {
+            binding.entity for binding in self.policy.bindings if binding.operation == "create"
+        }
+        invalid = sorted(
+            entity
+            for entity in self.test_data.entities
+            if entity not in self.allowed_entities or entity not in created
+        )
+        if invalid:
+            raise PydanticCustomError(
+                "lastro_test_data_entity",
+                "expected test_data entities listed in allowed_entities and with a create "
+                "binding (invalid: {entities})",
+                {"entities": ", ".join(invalid)},
+            )
+        return self
 
     @model_validator(mode="after")
     def _default_display_name(self) -> Self:

@@ -52,6 +52,20 @@ class RequestBinding(Strict):
     success_status: int = Field(default=201, ge=200, le=399)
     response_id: Text | None = None
     location_id: bool = False
+    response_tenant: Text | None = None
+
+    @field_validator("response_id", "response_tenant")
+    @classmethod
+    def json_path(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*", value):
+            raise ValueError("expected dot-separated keys (e.g. data.id)")
+        return value
+
+    @model_validator(mode="after")
+    def single_id_rule(self) -> Self:
+        if self.response_id is not None and self.location_id:
+            raise ValueError("use response_id or location_id, not both")
+        return self
 
     @field_validator("path")
     @classmethod

@@ -29,6 +29,7 @@ package; each one is installed from its own distribution, which carries its lice
 | click | Pallets | https://github.com/pallets/click | 8.5.0 | BSD-3-Clause | None | License text shipped with the package |
 | colorama (Windows only) | Jonathan Hartley | https://github.com/tartley/colorama | 0.4.6 | BSD-3-Clause | None | License text shipped with the package |
 | cryptography | The Python Cryptographic Authority and contributors | https://github.com/pyca/cryptography | 50.0.2 | Apache-2.0 OR BSD-3-Clause | None | License texts shipped with the package |
+| faker | Daniele Faraglia and contributors | https://github.com/joke2k/faker | 40.44.0 | MIT | None | License text shipped with the package |
 | fastapi | Sebastián Ramírez | https://github.com/fastapi/fastapi | 0.162.0 | MIT | None | License text shipped with the package |
 | greenlet | Alexey Borzenkov and contributors | https://github.com/python-greenlet/greenlet | 3.5.6 | MIT AND PSF-2.0 | None | License texts shipped with the package |
 | h11 | Nathaniel J. Smith | https://github.com/python-hyper/h11 | 0.16.0 | MIT | None | License text shipped with the package |
