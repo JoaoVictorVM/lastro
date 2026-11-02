@@ -61,6 +61,9 @@ def test_mcp_stdio_catalog_and_no_active_run(make_auth_project: Callable[..., An
             assert "action_ids" in schemas["record_test_check"]["properties"]
             assert "why_it_matters" in schemas["ask_clarification"]["properties"]
             assert schemas["mission_context"].get("properties", {}) == {}
+            assert "failure_domain" in schemas["report_finding"]["properties"]
+            assert "evidence_artifact_ids" in schemas["record_criterion_result"]["properties"]
+            assert schemas["stop_evidence_video"]["required"] == ["recording_id"]
             result = await client.call_tool("observe", {})
             assert isinstance(result.content[0], TextContent)
             assert json.loads(result.content[0].text)["error"].startswith("No active run")

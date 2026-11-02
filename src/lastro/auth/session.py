@@ -10,6 +10,7 @@ import os
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, cast
 
 from playwright.async_api import Browser, BrowserContext, Page, StorageState, async_playwright
@@ -189,13 +190,28 @@ class AuthSessionManager:
     ) -> TenantVerificationResult:
         return await self.verify(context, page, AuthTrigger.PRE_WRITE)
 
-    async def open_context(self, browser: Browser) -> BrowserContext:
-        """Abre um contexto com o estado publicado, sem expor o conteúdo ao chamador."""
+    async def open_context(
+        self,
+        browser: Browser,
+        *,
+        storage_state: StorageState | None = None,
+        record_video_dir: Path | None = None,
+    ) -> BrowserContext:
+        """Abre um contexto com o estado publicado, sem expor o conteúdo ao chamador.
+
+        Uma rotação de contexto pode repassar o estado vivo do contexto anterior, mantido só em
+        memória, para não perder cookies renovados durante a run.
+        """
         if self._ref is None:
             raise LoginFailedError(self.profile.name, "no_session")
-        state = self._store.read_for_context(self._ref, self.profile.name)
+        state = storage_state or cast(
+            StorageState, self._store.read_for_context(self._ref, self.profile.name)
+        )
         return await browser.new_context(
-            storage_state=cast(StorageState, state), service_workers="block", accept_downloads=False
+            storage_state=state,
+            service_workers="block",
+            accept_downloads=False,
+            record_video_dir=record_video_dir,
         )
 
     def invalidate(self) -> None:

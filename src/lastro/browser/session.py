@@ -5,6 +5,7 @@ import contextlib
 import os
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urljoin, urlsplit
 
@@ -16,6 +17,7 @@ from playwright.async_api import (
     Request,
     Response,
     Route,
+    StorageState,
     WebError,
     async_playwright,
 )
@@ -166,11 +168,18 @@ class BrowserSession:
         assert self.page is not None
         return self.page
 
-    async def open_context(self) -> None:
+    async def open_context(
+        self,
+        *,
+        storage_state: StorageState | None = None,
+        record_video_dir: Path | None = None,
+    ) -> None:
         assert self.browser is not None
         self.closing_context = False
         self.oracles.reset()
-        self.context = await self.auth.open_context(self.browser)
+        self.context = await self.auth.open_context(
+            self.browser, storage_state=storage_state, record_video_dir=record_video_dir
+        )
         self.secrets.update(
             cookie.get("value", "")
             for cookie in await self.context.cookies()
@@ -187,6 +196,23 @@ class BrowserSession:
         self.page = await self.context.new_page()
         if self.auth.verified_context is None:
             self.policy.locks.add("tenant")
+
+    async def rotate_context(self, *, record_video_dir: Path | None) -> Path | None:
+        """Troca o contexto mantendo storage state só em memória e voltando à URL atual.
+
+        Retorna o vídeo finalizado do contexto encerrado, quando ele gravava.
+        """
+        assert self.context is not None and self.page is not None
+        state = await self.context.storage_state()
+        url = self.page.url
+        video = self.page.video
+        await self.close_context()
+        path = await video.path() if video is not None else None
+        await self.open_context(storage_state=state, record_video_dir=record_video_dir)
+        assert self.page is not None
+        if is_same_origin(url, self.project.profile.target_url):
+            await self.page.goto(url)
+        return path
 
     def new_page(self, page: Page) -> None:
         page.on("crash", self.on_crash)

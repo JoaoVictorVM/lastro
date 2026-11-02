@@ -194,6 +194,10 @@ class HistoryStore:
     def _now(self) -> str:
         return db_timestamp(self._clock())
 
+    def run_dir(self, run_id: str) -> Path:
+        """Pasta privada da run, sem consultar o banco."""
+        return self._layout.run_dir(run_id)
+
     def run_paths(self, run_id: str) -> RunPaths:
         record = self.get_run(run_id)
         snapshot = (

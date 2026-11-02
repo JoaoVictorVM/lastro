@@ -32,6 +32,8 @@ EXPLORATION_TOOLS = frozenset(
         "wait_for",
         "generate_test_data",
         "report_finding",
+        "start_evidence_video",
+        "stop_evidence_video",
     }
 )
 # Ações com efeito observável no browser; um check precisa de ao menos uma delas.
