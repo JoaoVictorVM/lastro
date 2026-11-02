@@ -1,7 +1,7 @@
 """Auditoria anterior ao efeito de cada chamada."""
 
 from lastro.browser.policy import Decision
-from lastro.history import EventType, HistoryStore
+from lastro.history import EventType, HistoryStore, JsonObject
 
 
 def record_call(
@@ -11,6 +11,7 @@ def record_call(
     tool: str,
     arguments: object,
     decision: Decision,
+    details: JsonObject | None = None,
 ) -> int:
     event = history.append_event(
         run_id, EventType.TOOL_CALL, tool_name=tool, arguments=arguments, correlation_id=action_id
@@ -21,6 +22,6 @@ def record_call(
         tool_name=tool,
         correlation_id=action_id,
         policy_decision=decision.effect,
-        payload={"reason": decision.reason, "fingerprint": decision.fingerprint},
+        payload={"reason": decision.reason, "fingerprint": decision.fingerprint, **(details or {})},
     )
     return event.sequence
