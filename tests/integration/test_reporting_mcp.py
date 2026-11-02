@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from lastro.browser.tools import BrowserTools
@@ -161,6 +162,17 @@ def test_criterion_results_and_sealed_end_run(history_context: ProjectContext) -
 
     ended = call(runtime, "end_run", {"outcome": "completed", "reason": "done"})
     assert ended["status"] == "completed"
+    assert ended["report_status"] == "ready"
+    assert ended["report_path"].endswith("report.md")
+    assert ended["summary"] == [
+        "Status: completed (done)",
+        "Criteria met: 1/2",
+        "Confirmed findings: 0",
+        "Suspected findings: 0",
+        "Created records pending cleanup: 0",
+    ]
+    report = Path(ended["report_path"]).read_text(encoding="utf-8")
+    assert "Status: completed" in report
     results = {item.criterion_id: item for item in history.list_criterion_results(run_id)}
     assert results[criteria[0]].outcome == CriterionOutcome.MET
     assert (results[criteria[1]].outcome, results[criteria[1]].reason) == (

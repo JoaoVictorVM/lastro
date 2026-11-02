@@ -41,6 +41,7 @@ from lastro.mission import (
 )
 from lastro.mission.models import EXPLORATION_TOOLS
 from lastro.oracles.models import OracleSignal
+from lastro.reporting.builder import ReportBuilder
 from lastro.reporting.models import (
     CriterionResultInput,
     FindingInput,
@@ -531,7 +532,22 @@ class BrowserTools:
             await self.session.close()
         self.history.seal_criterion_results(self.run_id)
         self.history.finish_run(self.run_id, RunStatus(args.outcome), args.reason)
-        return {"status": args.outcome}
+        result: dict[str, Any] = {"status": args.outcome}
+        # O relatório fica fora da transação terminal: falhar aqui nunca reabre nem muda a run.
+        try:
+            report = ReportBuilder(self.history).build_final(self.run_id)
+        except Exception as error:
+            result.update(report_status="failed", report_error=self.session.sanitize(str(error)))
+            return result
+        result.update(
+            report_status=report.status.value,
+            report_path=str(report.report_path or report.fallback_path or ""),
+            issue_paths=[str(path) for path in report.issue_paths],
+            summary=list(report.summary_lines),
+        )
+        if report.snapshot.error_text:
+            result["report_error"] = report.snapshot.error_text
+        return result
 
     async def prepare(self, name: str, args: Arguments, action_id: str) -> tuple[Any, Decision]:
         if args.target is None:

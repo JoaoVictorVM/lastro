@@ -3,7 +3,6 @@ from collections.abc import Callable
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
-import pytest
 from playwright.async_api import Page
 
 from lastro.browser.bindings import ExpectedRequest
@@ -280,6 +279,41 @@ def test_f03_f06_created_record_uses_run_and_captured_response(
     assert record.action_id == submit.correlation_id
 
 
-@pytest.mark.skip(reason="integração de relatório pendente até existir o report builder")
-def test_report_created_records_lists_every_record_with_identifier() -> None:
-    pass
+def test_report_created_records_lists_every_record_with_identifier(
+    history_context: ProjectContext,
+) -> None:
+    from lastro.browser.events import record_call
+    from lastro.browser.policy import Decision
+    from lastro.history import CreatedRecordInput, RunStatus, TextMission, open_history
+    from lastro.reporting import ReportBuilder
+
+    store = open_history(history_context)
+    run_id = store.create_run(history_context, TextMission("Criar")).record.id
+    tracked = []
+    for action, identifier in (("create-1", "emp-41"), ("create-2", None)):
+        record_call(store, run_id, action, "submit", {}, Decision("allow", "", ""))
+        tracked.append(
+            store.record_created(
+                CreatedRecordInput(
+                    run_id=run_id,
+                    action_id=action,
+                    entity="employee",
+                    system_identifier=identifier,
+                    tenant="acme",
+                    expected_tenant="acme",
+                )
+            )
+        )
+    store.finish_run(run_id, RunStatus.COMPLETED)
+
+    outcome = ReportBuilder(store).build_final(run_id)
+
+    assert outcome.report_path is not None
+    text = outcome.report_path.read_text(encoding="utf-8")
+    table = text[text.index("## Created records and cleanup") : text.index("## Memory outcome")]
+    for record in tracked:
+        assert f"`{record.id}`" in table
+        assert f"`{record.system_identifier}`" in table
+    assert "`emp-41`" in table and "`unknown`" in table
+    assert f"LASTRO-{run_id[-4:]}" in table
+    assert "Created records pending cleanup: 2" in text

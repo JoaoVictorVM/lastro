@@ -1,5 +1,6 @@
 """Contratos de entrada das tools de achados e critérios, e DTOs do relatório."""
 
+from dataclasses import dataclass
 from typing import Annotated, Any, Self, cast
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -195,3 +196,175 @@ def parse_criterion_result(raw: dict[str, Any]) -> CriterionResultDraft:
         return CriterionResultInput.model_validate(raw).draft()
     except ValidationError as error:
         raise ReportingError(INVALID_RESULT, _first_error(error)) from None
+
+
+@dataclass(frozen=True)
+class EvidenceView:
+    artifact_id: str
+    relative_path: str
+    artifact_type: str
+    sha256: str
+    purpose: str
+    missing: bool
+
+
+@dataclass(frozen=True)
+class ReproductionView:
+    child_run_id: str
+    outcome: str
+    executor: str
+    attempted_at: str
+
+
+@dataclass(frozen=True)
+class FindingView:
+    id: str
+    title: str
+    flow: str
+    classification: str
+    failure_domain: str
+    origin: str
+    severity_suggestion: str | None
+    environment_url: str
+    tenant: str
+    system_version: str | None
+    preconditions: tuple[str, ...]
+    steps: tuple[str, ...]
+    expected: str
+    expected_source: str
+    expected_source_ref: str | None
+    observed: str
+    evidence: tuple[EvidenceView, ...]
+    limitations: tuple[str, ...]
+    reproduction_attempts: tuple[ReproductionView, ...]
+    fingerprint: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class CriterionView:
+    id: str
+    text: str
+    source: str
+    outcome: str
+    reason: str
+    note: str
+    revision: int
+    result_source: str
+    evidence: tuple[EvidenceView, ...]
+
+
+@dataclass(frozen=True)
+class SignalView:
+    id: str
+    signal_type: str
+    http_method: str | None
+    http_status: int | None
+    url_path: str
+    message: str
+    occurrence_count: int
+    first_seen_at: str
+    last_seen_at: str
+    action_id: str | None
+    action_sequence: int | None
+    action_tool: str | None
+
+
+@dataclass(frozen=True)
+class CreatedRecordView:
+    tracking_id: str
+    entity: str
+    identifier: str
+    tenant: str
+    cleanup_status: str
+    action_id: str | None
+    detail_url: str | None
+    cleanup_instructions: str | None
+    warnings: tuple[str, ...]
+    created_at: str
+
+
+@dataclass(frozen=True)
+class BlockView:
+    kind: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class SummaryView:
+    status: str
+    status_reason: str | None
+    criteria_met: int
+    criteria_total: int
+    confirmed: int
+    suspected: int
+    inconclusive: int
+    harness_failures: int
+    pending_cleanup: int
+    integrity_valid: bool
+
+    def lines(self) -> tuple[str, ...]:
+        """Resumo de cinco linhas exibido no fim da run."""
+        reason = f" ({self.status_reason})" if self.status_reason else ""
+        return (
+            f"Status: {self.status}{reason}",
+            f"Criteria met: {self.criteria_met}/{self.criteria_total}",
+            f"Confirmed findings: {self.confirmed}",
+            f"Suspected findings: {self.suspected}",
+            f"Created records pending cleanup: {self.pending_cleanup}",
+        )
+
+
+@dataclass(frozen=True)
+class MissionView:
+    source: str
+    text: str | None
+    snapshot_path: str | None
+    content_sha256: str | None
+    plan_revision: int | None
+    objectives: tuple[str, ...]
+    scope: tuple[str, ...]
+    gaps: tuple[str, ...]
+    out_of_scope: tuple[str, ...]
+    charter_statement: str | None
+    timebox_minutes: int | None
+    heuristics: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EnvironmentView:
+    run_id: str
+    profile: str
+    environment_url: str
+    tenant: str
+    executor_name: str
+    executor_version: str | None
+    lastro_version: str
+    skill_bundle_version: str | None
+    analyzed_code_version: str | None
+    executed_system_version: str | None
+    started_at: str
+    ended_at: str | None
+
+
+@dataclass(frozen=True)
+class ReportData:
+    """Projeção determinística do histórico; o hash destes dados identifica o snapshot."""
+
+    kind: str
+    run_id: str
+    termination_reason: str | None
+    summary: SummaryView
+    mission: MissionView
+    environment: EnvironmentView
+    criteria: tuple[CriterionView, ...]
+    confirmed: tuple[FindingView, ...]
+    suspected: tuple[FindingView, ...]
+    oracle_signals: tuple[SignalView, ...]
+    harness_failures: tuple[FindingView, ...]
+    blocks: tuple[BlockView, ...]
+    created_records: tuple[CreatedRecordView, ...]
+    created_records_warning: str | None
+    memory_outcome: str
+    limitations: tuple[str, ...]
+    missing_evidence: tuple[str, ...]

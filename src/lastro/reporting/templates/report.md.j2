@@ -1,0 +1,240 @@
+{% macro finding_block(item, public) %}
+### {{ item.title | inline }}
+
+- Finding: {{ item.id | code }}
+- Classification: {{ item.classification }}
+- Flow: {{ item.flow | inline }}
+{% if item.severity_suggestion %}
+- Severity suggestion: {{ item.severity_suggestion }}
+{% endif %}
+{% if not public %}
+- Environment: {{ item.environment_url | code }}, tenant {{ item.tenant | code }}
+{% endif %}
+{% if item.system_version %}
+- System version: {{ item.system_version | code }}
+{% endif %}
+
+**Preconditions**
+
+{% for precondition in item.preconditions %}
+- {{ precondition | inline }}
+{% else %}
+- none
+{% endfor %}
+
+**Steps**
+
+{% for step in item.steps %}
+{{ loop.index }}. {{ step | inline }}
+{% endfor %}
+
+**Expected** (source: {{ item.expected_source }}{% if item.expected_source_ref and not public %}, {{ item.expected_source_ref | code }}{% endif %})
+
+{{ item.expected | quote }}
+
+**Observed**
+
+{{ item.observed | quote }}
+
+{% if not public %}
+**Evidence**
+
+{% for evidence in item.evidence %}
+- [{{ evidence.relative_path | inline }}]({{ evidence.relative_path }}) ({{ evidence.artifact_type }}, {{ evidence.purpose }}, sha256 {{ evidence.sha256 | code }}){% if evidence.missing %} ⚠ evidence missing: {{ evidence.relative_path | inline }}{% endif %}
+
+{% else %}
+- none
+{% endfor %}
+
+{% endif %}
+{% if item.reproduction_attempts %}
+**Reproduction attempts**
+
+{% for attempt in item.reproduction_attempts %}
+- {{ attempt.outcome }} by {{ attempt.executor | inline }} at {{ attempt.attempted_at }}{% if not public %} (run {{ attempt.child_run_id | code }}){% endif %}
+
+{% endfor %}
+
+{% endif %}
+{% if item.limitations %}
+**Limitations**
+
+{% for limitation in item.limitations %}
+- {{ limitation | inline }}
+{% endfor %}
+{% endif %}
+{% endmacro %}
+{% set public = report.kind == "public" %}
+# Lastro report: {{ report.run_id }}{% if report.kind == "partial" %} (partial){% endif %}
+
+
+## Summary
+
+{% for line in report.summary.lines() %}
+- {{ line | inline }}
+{% endfor %}
+- Inconclusive findings: {{ report.summary.inconclusive }}
+- Agent and tool failures: {{ report.summary.harness_failures }}
+- Integrity: {{ "valid" if report.summary.integrity_valid else "invalid (see limitations)" }}
+
+## Mission and charter
+
+- Mission source: {{ report.mission.source }}
+{% if report.mission.text and not public %}
+
+{{ report.mission.text | quote }}
+
+{% endif %}
+{% if report.mission.snapshot_path and not public %}
+- Mission snapshot: {{ report.mission.snapshot_path | code }} (sha256 {{ report.mission.content_sha256 | code }})
+{% endif %}
+{% if report.mission.plan_revision %}
+- Plan revision: {{ report.mission.plan_revision }}
+{% if report.mission.charter_statement %}
+- Charter: {{ report.mission.charter_statement | inline }}
+{% endif %}
+{% if report.mission.timebox_minutes %}
+- Time box: {{ report.mission.timebox_minutes }} minutes
+{% endif %}
+- Heuristics: {{ report.mission.heuristics | join(", ") | inline }}
+
+**Objectives**
+
+{% for item in report.mission.objectives %}
+- {{ item | inline }}
+{% endfor %}
+
+**Scope**
+
+{% for item in report.mission.scope %}
+- {{ item | inline }}
+{% else %}
+- none
+{% endfor %}
+
+**Gaps**
+
+{% for item in report.mission.gaps %}
+- {{ item | inline }}
+{% else %}
+- none
+{% endfor %}
+
+**Out of scope**
+
+{% for item in report.mission.out_of_scope %}
+- {{ item | inline }}
+{% else %}
+- none
+{% endfor %}
+{% else %}
+- No mission plan was submitted.
+{% endif %}
+
+## Environment and versions
+
+| Field | Value |
+|---|---|
+| Run | {{ report.environment.run_id | code }} |
+| Profile | {{ report.environment.profile | inline }} |
+{% if not public %}
+| Environment | {{ report.environment.environment_url | code }} |
+| Tenant | {{ report.environment.tenant | code }} |
+{% endif %}
+| Executor | {{ report.environment.executor_name | inline }} {{ (report.environment.executor_version or "") | inline }} |
+| Lastro | {{ report.environment.lastro_version | inline }} |
+| Skill bundle | {{ (report.environment.skill_bundle_version or "none") | inline }} |
+| Analyzed code version | {{ (report.environment.analyzed_code_version or "unknown") | inline }} |
+| Executed system version | {{ (report.environment.executed_system_version or "unknown") | inline }} |
+| Started | {{ report.environment.started_at }} |
+| Ended | {{ report.environment.ended_at or "not ended" }} |
+
+## Criteria results
+
+{% if report.criteria %}
+| Criterion | Outcome | Reason | Evidence |
+|---|---|---|---|
+{% for item in report.criteria %}
+| {{ item.text | inline }}{% if not public %} ({{ item.id | code }}){% endif %} | {{ item.outcome }} | {{ item.reason | inline }}{% if item.note %}: {{ item.note | inline }}{% endif %} | {% if public %}{{ item.evidence | length }} file(s){% else %}{% for evidence in item.evidence %}{{ evidence.relative_path | code }}{% if evidence.missing %} ⚠ evidence missing{% endif %}{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}{% endif %} |
+{% endfor %}
+{% else %}
+No explicit criteria.
+{% endif %}
+
+## Confirmed findings
+
+{% for item in report.confirmed %}
+{{ finding_block(item, public) }}
+{% else %}
+None.
+{% endfor %}
+
+## Suspected and inconclusive findings
+
+{% for item in report.suspected %}
+{{ finding_block(item, public) }}
+{% else %}
+None.
+{% endfor %}
+
+## Oracle signals
+
+{% if report.oracle_signals %}
+| Signal | Request | Message | Count | Triggering action |
+|---|---|---|---|---|
+{% for item in report.oracle_signals %}
+| {{ item.signal_type }} | {{ (item.http_method or "") | inline }} {{ item.url_path | code }}{% if item.http_status %} {{ item.http_status }}{% endif %} | {{ item.message | inline }} | {{ item.occurrence_count }} | {% if item.action_id %}{{ (item.action_tool or "unknown") | inline }} #{{ item.action_sequence }}{% if not public %} ({{ item.action_id | code }}){% endif %}{% else %}none{% endif %} |
+{% endfor %}
+{% else %}
+No oracle signals.
+{% endif %}
+
+## Agent and tool failures
+
+These are harness problems, not defects of the system under test.
+
+{% for item in report.harness_failures %}
+- {{ item.failure_domain }}: {{ item.title | inline }}{% if not public %} ({{ item.id | code }}){% endif %}. Observed: {{ item.observed | inline }}
+{% else %}
+None.
+{% endfor %}
+
+## Blocks and pending items
+
+{% for item in report.blocks %}
+- {{ item.kind }}: {{ item.detail | inline }}
+{% else %}
+None.
+{% endfor %}
+
+## Created records and cleanup
+
+{% if report.created_records %}
+{% if public %}
+{{ report.created_records | length }} record(s) created; {{ report.summary.pending_cleanup }} pending cleanup.
+{% else %}
+| Tracking id | Entity | Identifier | Tenant | Cleanup | Details |
+|---|---|---|---|---|---|
+{% for item in report.created_records %}
+| {{ item.tracking_id | code }} | {{ item.entity | inline }} | {{ item.identifier | code }} | {{ item.tenant | code }} | {{ item.cleanup_status }} | {% if item.detail_url %}{{ item.detail_url | code }}{% endif %}{% if item.cleanup_instructions %} {{ item.cleanup_instructions | inline }}{% endif %}{% if item.warnings %} warnings: {{ item.warnings | join(", ") | inline }}{% endif %} |
+{% endfor %}
+{% endif %}
+{% else %}
+No records were created.
+{% endif %}
+{% if report.created_records_warning and not public %}
+
+⚠ {{ report.created_records_warning | inline }}
+{% endif %}
+
+## Memory outcome
+
+{{ report.memory_outcome | inline }}
+
+## Limitations
+
+{% for item in report.limitations %}
+- {{ item | inline }}
+{% else %}
+None.
+{% endfor %}
