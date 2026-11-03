@@ -10,7 +10,14 @@ from mcp.types import TextContent, Tool
 
 from lastro.approvals.notifications import default_router
 from lastro.browser.control import HumanControl
-from lastro.browser.tools import NO_RUN, TOOLS, BrowserTools, input_schema
+from lastro.browser.tools import (
+    KNOWLEDGE_MODELS,
+    NO_ACTIVE_RUN,
+    NO_RUN,
+    TOOLS,
+    BrowserTools,
+    input_schema,
+)
 from lastro.config.loader import load_project
 from lastro.history import open_history
 
@@ -39,7 +46,12 @@ async def serve(profile: str | None = None) -> None:
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         import json
 
-        result = await runtime.call(name, arguments) if runtime else {"error": NO_RUN}
+        if runtime is not None:
+            result = await runtime.call(name, arguments)
+        elif name in KNOWLEDGE_MODELS:
+            result = {"error": NO_ACTIVE_RUN, "message": NO_RUN}
+        else:
+            result = {"error": NO_RUN}
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
     control = HumanControl(runtime) if runtime is not None else None

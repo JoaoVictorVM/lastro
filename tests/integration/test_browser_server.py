@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from lastro.browser.tools import TOOLS, BrowserTools, untrusted
+from lastro.browser.tools import KNOWLEDGE_MODELS, TOOLS, BrowserTools, untrusted
 from lastro.history import TextMission, open_history
 
 
@@ -13,9 +13,13 @@ def test_all_tools_require_active_run(make_auth_project: Callable[..., Any], nam
     project = make_auth_project().context()
     history = open_history(project)
     runtime = BrowserTools(project, history, "missing")
-    assert asyncio.run(runtime.call(name, {})) == {
-        "error": "No active run. Start one with 'lastro run start'."
-    }
+    message = "No active run. Start one with 'lastro run start'."
+    expected = (
+        {"error": "no_active_run", "message": message}
+        if name in KNOWLEDGE_MODELS
+        else {"error": message}
+    )
+    assert asyncio.run(runtime.call(name, {})) == expected
     assert runtime.session.page is None
 
 
