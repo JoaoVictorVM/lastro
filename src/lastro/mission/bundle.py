@@ -20,7 +20,15 @@ BUNDLE_DIR = Path("skills") / "lastro"
 INSTRUCTION_MAX_LINES = 60
 FIX = "rode 'lastro init' para materializar o bundle e as instruções do executor"
 # Hashes de versões publicadas anteriormente; arquivos idênticos a elas são atualizados pelo init.
-PREVIOUS_SHA256: dict[str, frozenset[str]] = {name: frozenset() for name in SKILL_FILES}
+PREVIOUS_SHA256: dict[str, frozenset[str]] = {
+    **{name: frozenset[str]() for name in SKILL_FILES},
+    "explore.md": frozenset(
+        {
+            "2868cd7a1aca4952ebbdce1a09835f95ed9c7e90b562a1329c513cd3d87f6ab1",
+            "0f7f787c3662b32c18518dbe423cc0cd075131b20995d2759a06fdb116d114fd",
+        }
+    ),
+}
 
 
 class ManifestEntry(BaseModel):

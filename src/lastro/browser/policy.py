@@ -6,17 +6,28 @@ from dataclasses import dataclass, field
 
 from lastro.config.policy import Effect, Operation, Origin
 from lastro.config.schema import Profile
+from lastro.history import JsonObject, JsonValue
 from lastro.history.redaction import canonical_json, is_sensitive_key, redact, sha256_hex
+
+FINGERPRINT_VERSION = 2
 
 
 @dataclass(frozen=True)
 class Action:
+    """Envelope canônico da ação; os campos de contexto entram na identidade aprovada."""
+
     operation: Operation
     entity: str = ""
     record_id: str = ""
     values: dict[str, str] = field(default_factory=dict[str, str])
     method: str = "GET"
     origin: Origin = "unknown"
+    run_id: str = ""
+    tool: str = ""
+    route: str = ""
+    target: tuple[tuple[str, str], ...] = ()
+    changes: tuple[tuple[str, str, str], ...] = ()
+    page_state: str = ""
 
 
 @dataclass(frozen=True)
@@ -24,6 +35,30 @@ class Decision:
     effect: Effect
     reason: str
     fingerprint: str
+    components: JsonObject | None = None
+
+
+def fingerprint_components(action: Action, tenant: str) -> JsonObject:
+    """Campos comparados em ordem estável; motivo e efeitos conhecidos ficam de fora."""
+    return {
+        "tenant": tenant,
+        "target": {
+            "tool": action.tool,
+            "route": action.route,
+            "element": dict(action.target),
+            "entity": action.entity,
+            "method": action.method,
+            "origin": action.origin,
+        },
+        "record": action.record_id,
+        "operation": action.operation,
+        "fields": list[JsonValue](sorted(name for name, _, _ in action.changes)),
+        "values": {
+            "proposed": dict(sorted(action.values.items())),
+            "changes": [list[JsonValue]([name, old, new]) for name, old, new in action.changes],
+        },
+        "page_state": action.page_state,
+    }
 
 
 class PolicyEngine:
@@ -40,23 +75,15 @@ class PolicyEngine:
         )
 
     def decide(self, action: Action, verified: bool) -> Decision:
+        components = fingerprint_components(action, self.profile.tenant_id)
         fingerprint = sha256_hex(
             canonical_json(
-                redact(
-                    {
-                        "version": 1,
-                        "tenant": self.profile.tenant_id,
-                        "record": action.record_id,
-                        "operation": action.operation,
-                        "entity": action.entity,
-                        "values": action.values,
-                    }
-                )
+                redact({"version": FINGERPRINT_VERSION, "run": action.run_id, **components})
             )
         )
 
         def result(effect: Effect, reason: str) -> Decision:
-            return Decision(effect, reason, fingerprint)
+            return Decision(effect, reason, fingerprint, components)
 
         if action.operation in {"delete", "deactivate", "switch_tenant"}:
             return result("deny", "no-destructive")

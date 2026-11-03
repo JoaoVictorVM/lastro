@@ -13,6 +13,7 @@ from playwright.async_api import (
     Browser,
     BrowserContext,
     ConsoleMessage,
+    Locator,
     Page,
     Request,
     Response,
@@ -41,6 +42,23 @@ from lastro.history.redaction import preview, redact_text
 from lastro.oracles.collector import OracleCollector
 
 MAX_IDENTIFIER_LENGTH = 256
+# Valor que o servidor renderizou, antes de qualquer digitação: é o "antes" mostrado no pedido.
+INITIAL_VALUE_SCRIPT = """element => {
+  if (element instanceof HTMLSelectElement) {
+    const chosen = Array.from(element.options).find(option => option.defaultSelected);
+    return (chosen || element.options[0] || {value: ''}).value;
+  }
+  return typeof element.defaultValue === 'string' ? element.defaultValue : null;
+}"""
+
+
+async def initial_value(control: Locator) -> str | None:
+    """Leitura sem efeito do valor original do controle; ausente quando não observável."""
+    try:
+        value = await control.evaluate(INITIAL_VALUE_SCRIPT)
+    except Exception:
+        return None
+    return value if isinstance(value, str) else None
 
 
 def is_creation(expected: ExpectedRequest, method: str, status: int) -> bool:

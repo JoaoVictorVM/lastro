@@ -8,8 +8,11 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+from lastro.approvals.proof import ProofError, verify
 from lastro.auth.storage import create_private_file, ensure_private_directory
 from lastro.browser.tools import BrowserTools
+from lastro.history import ApprovalChoice, DecidedBy, HistoryError
+from lastro.history.approvals import nonce_digest
 
 
 def write_private(path: Path, data: dict[str, object]) -> None:
@@ -31,10 +34,23 @@ def read_message(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], data)
 
 
+def control_directory(root: Path, run_id: str) -> Path:
+    return root / ".auth" / ("control-" + run_id)
+
+
+def owner_secret(root: Path, run_id: str) -> str:
+    """Segredo do browser owner, legível só pelo usuário dono do diretório privado."""
+    descriptor = read_message(control_directory(root, run_id) / "owner.json")
+    secret = descriptor.get("secret")
+    if descriptor.get("run_id") != run_id or not isinstance(secret, str):
+        raise ValueError("Control belongs to another run")
+    return secret
+
+
 class HumanControl:
     def __init__(self, runtime: BrowserTools) -> None:
         self.runtime = runtime
-        self.directory = runtime.project.project_data_dir / ".auth" / ("control-" + runtime.run_id)
+        self.directory = control_directory(runtime.project.project_data_dir, runtime.run_id)
         self.secret = secrets.token_hex(32)
         self.task: asyncio.Task[None] | None = None
 
@@ -82,6 +98,26 @@ class HumanControl:
             except Exception:
                 self.runtime.session.policy.locks.add("tenant")
 
+    def accept_proof(self, action_id: str, token: str) -> bool:
+        """Prova do prompt nativo: grava approve do executor uma única vez, nunca por argumento."""
+        pending = self.runtime.approvals.pending()
+        if pending is None or pending.action_id != action_id:
+            return False
+        try:
+            nonce = verify(
+                self.secret, token, pending.action_id, pending.fingerprint, self.runtime.clock()
+            )
+            self.runtime.history.decide_approval(
+                action_id,
+                ApprovalChoice.APPROVE,
+                DecidedBy.EXECUTOR_PROMPT,
+                run_id=self.runtime.run_id,
+                proof_nonce_sha256=nonce_digest(nonce),
+            )
+        except (ProofError, HistoryError):
+            return False
+        return True
+
     async def close(self) -> None:
         if self.task is not None:
             self.task.cancel()
@@ -94,15 +130,13 @@ class HumanControl:
 
 
 def request_reverification(root: Path, run_id: str) -> str:
-    directory = root / ".auth" / ("control-" + run_id)
-    descriptor = read_message(directory / "owner.json")
-    if descriptor.get("run_id") != run_id:
-        raise ValueError("Control belongs to another run")
+    directory = control_directory(root, run_id)
+    secret = owner_secret(root, run_id)
     nonce = secrets.token_hex(16)
     write_private(
         directory / "request.json",
         {
-            "secret": descriptor["secret"],
+            "secret": secret,
             "run_id": run_id,
             "operation": "reverify-tenant",
             "nonce": nonce,

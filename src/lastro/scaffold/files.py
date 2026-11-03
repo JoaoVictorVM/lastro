@@ -10,6 +10,7 @@ from enum import Enum
 from importlib.resources import files
 from pathlib import Path
 from string import Template
+from typing import Any, cast
 
 from lastro.config.schema import DEFAULT_EXECUTOR, is_canonical_project_id, new_project_id
 from lastro.executors import ExecutorSpec, get_executor
@@ -21,6 +22,16 @@ ENV_EXAMPLE_FILE = Path(".env.example")
 MISSIONS_MARKER = Path("missions") / ".gitkeep"
 MISSION_EXAMPLE = Path("missions") / "example.md"
 CREDENTIAL_PREFIX = "LASTRO_"
+HOOK_COMMAND = "lastro-permission-hook"
+REQUIRED_HOOKS = ("PreToolUse", "Notification")
+# Versões publicadas das settings do executor; cópias idênticas recebem os hooks novos no init.
+PREVIOUS_SETTINGS_SHA256 = frozenset(
+    {
+        "c15c4a0dfb181473a700e784be149a13a742afc51a2ef202421f02ec3cad1df1",
+        "0a246487125c41d4b4fd504416ae42e9ac6134f0a9c92e66a25e461ce5cd7538",
+        "f729a2e8a57db410b5b394e4d0a07f31905c15c8fdfceadea48203cf8c65de06",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -135,6 +146,54 @@ def _managed_existing(
     )
 
 
+def _items(value: object) -> list[dict[str, Any]]:
+    entries = cast(list[object], value) if isinstance(value, list) else []
+    return [cast(dict[str, Any], item) for item in entries if isinstance(item, dict)]
+
+
+def missing_hooks(settings: object) -> list[str]:
+    """Eventos do executor sem o hook do Lastro, que sustenta catálogo e prompt de aprovação."""
+    data = cast(dict[str, Any], settings) if isinstance(settings, dict) else {}
+    hooks_value: object = data.get("hooks")
+    hooks = cast(dict[str, Any], hooks_value) if isinstance(hooks_value, dict) else {}
+    missing: list[str] = []
+    for event in REQUIRED_HOOKS:
+        commands = [
+            hook.get("command")
+            for group in _items(hooks.get(event))
+            for hook in _items(group.get("hooks"))
+        ]
+        if HOOK_COMMAND not in commands:
+            missing.append(event)
+    return missing
+
+
+def _managed_settings(
+    project_dir: Path, relative: Path, content: str, result: ScaffoldResult
+) -> None:
+    """Settings existentes: versão publicada é atualizada; edição local só é diagnosticada."""
+    target = project_dir / relative
+    current = normalize(target.read_bytes())
+    if current == normalize(content.encode("utf-8")):
+        result.preserved.append(relative)
+        return
+    if hashlib.sha256(current).hexdigest() in PREVIOUS_SETTINGS_SHA256:
+        _replace_atomically(target, content)
+        result.updated.append(relative)
+        return
+    result.preserved.append(relative)
+    try:
+        missing = missing_hooks(json.loads(current.decode("utf-8")))
+    except ValueError:
+        missing = list(REQUIRED_HOOKS)
+    if missing:
+        result.diagnostics.append(
+            f"{relative.as_posix()} foi modificado localmente e não foi sobrescrito; adicione "
+            f"o hook {HOOK_COMMAND} em {', '.join(missing)} para o catálogo e o prompt de "
+            "aprovação"
+        )
+
+
 def write_scaffold(
     project_dir: Path, answers: InitAnswers, executor: str = DEFAULT_EXECUTOR
 ) -> ScaffoldResult:
@@ -149,6 +208,8 @@ def write_scaffold(
         if target.exists():
             if relative.parent == BUNDLE_DIR:
                 _managed_existing(project_dir, relative, content, result)
+            elif relative == executor_spec(executor).permission_file:
+                _managed_settings(project_dir, relative, content, result)
             else:
                 result.preserved.append(relative)
             continue

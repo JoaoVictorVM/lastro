@@ -50,8 +50,8 @@ authorize seed records. Its create binding reads the new employee id from the de
 same-origin `Location` header, and `demo_test_data()` adds the detail link and cleanup text.
 
 Edits require a record created by a matched action in the current run or an exact human
-preauthorization tuple. Unknown origins return `require_approval` without executing or
-queuing the action. A creation binding may identify its result using `response_id` (a JSON
+preauthorization tuple. Unknown origins return `require_approval`: the action is not
+executed or queued, and the human approval gate described below records a request instead. A creation binding may identify its result using `response_id` (a JSON
 key path) or `location_id` (the final segment of a same-origin Location header), never
 both. Without an unambiguous result, subsequent edits still require approval.
 
@@ -306,17 +306,87 @@ Unless the run's profile was marked `public = true` (for targets without real da
 the demo), the export omits tenant names, URLs, record ids, artifact ids, `LASTRO-*` names,
 screenshots and videos, and redacts known run values in free text.
 
+## Human approval gates
+
+A `require_approval` decision opens a gate; `deny` is never elevated. The first attempt
+records the request, an `approval_requested` event and the run state `awaiting_approval`
+before anything reaches the target, then returns:
+
+```json
+{
+  "decision": "awaiting_approval",
+  "approval_id": "<action id>",
+  "fingerprint": "<64 hex>",
+  "expires_at": "2026-11-02T18:15:00.000000Z",
+  "summary": "edit employee #57 (phone, email) in Clínica Aurora",
+  "command": "lastro approve <action id>"
+}
+```
+
+The request shows the run, environment, tenant, record, action, ordered field changes
+(`old -> new`, with `unknown` when the old value is not observable), the agent's `reason`,
+known effects and the fingerprint. A run holds at most one pending request; while it waits,
+only `mission_context`, `approval_status` and `end_run` run, and other tools answer
+`approval_pending`.
+
+Decisions happen outside the model:
+
+- `lastro approve <id>` approves, `--skip` skips and `--end` cancels the run, engages the
+  write lock and builds the partial report. `--note` adds up to 2,000 characters. Exit codes
+  are 0 on success, 1 for operational errors and 2 for invalid usage. An unknown, expired or
+  already decided id prints `No pending approval with id <id>.` and changes nothing.
+- With Claude Code, retrying a write with `approval_id` makes the PreToolUse hook answer
+  `ask` with the full request. When the user accepts, the hook's updated input carries a
+  60-second, single-use proof signed with the browser owner's private secret, and the server
+  records `decided_by=executor_prompt`. The model never sees the secret; an `approval_proof`
+  sent by the model is denied. Without a pending request or owner channel, the hook does
+  not approve and the CLI remains the decision channel.
+
+`approval_status` waits up to 30 seconds per call and reports `pending`, `approved`,
+`skipped`, `ended`, `expired`, `invalidated`, `consumed` or `execution_failed`. It never
+decides or executes.
+
+After approval, the agent retries the same call with `approval_id`. The server rebuilds the
+action from the live page and recomputes the fingerprint over run, tenant, route, target,
+entity, record, operation, method, origin, old and new values and a digest of the form's
+original and current values. Reason and known effects do not change identity. A match
+consumes the approval in a conditional update before the effect, so one approval executes
+exactly once; a failure after consumption becomes `execution_failed` and is never replayed.
+A mismatch invalidates the approval and raises a new request with
+`The action changed after approval (<field>); approval required again.`, where the field is
+the first of tenant, target, record, operation, fields, values and page_state that differs.
+If the retry is denied by policy, the denial wins; an ordinary allow does not use the
+approval.
+
+A request without a decision expires after 15 minutes as `skipped (no response)`, decided by
+`system`, and the run continues. Expiry is reconciled by a timer, on every tool call and
+status read, and when the history opens, so a crash never extends an approval. Approvals are
+stored only in `approvals`; clarifications stay in their own table and no decision becomes
+knowledge. The evaluation harness can decide with `decided_by=scripted` through the same
+history interface, bound to the same fingerprint.
+
+The browser server tries a desktop notification within 5 seconds of each request
+(PowerShell toast on Windows, `osascript` on macOS, `notify-send` on Linux), and the
+executor's Notification hook repeats it for permission prompts. Set
+`LASTRO_DESKTOP_NOTIFICATIONS=off` to disable it. Every attempt is recorded with its
+latency; when delivery fails, `notification_degraded` is recorded and `lastro tail` remains
+the fallback: it prints an `APPROVAL REQUIRED` banner with the summary and command, rings
+the terminal bell once for a request that is still pending when stdout is a TTY, and shows
+outcomes such as `approved by user at 14:32` or `skipped (no response) at 14:47`.
+
 ## Executor configuration and current boundaries
 
 `lastro init` preserves existing files and generates `.mcp.json` plus Claude Code settings.
 Generated settings deny local file tools, shell tools, modifications and web tools. A
 PreToolUse hook allows only the Lastro catalog, including when other MCP server names are
 present. This deliberately blocks all local reads rather than relying on path patterns
-for secrets and symlinks. Install the package so both `lastro-browser` and
-`lastro-permission-hook` are available on PATH. Existing settings need manual reconciliation;
-init does not overwrite them. These settings are executor controls, not OS isolation.
+for secrets and symlinks. The same hook handles the Notification event. Install the package
+so both `lastro-browser` and `lastro-permission-hook` are available on PATH. `lastro init`
+updates settings identical to a previously published version; locally edited settings are
+preserved and init reports which hooks are missing. These settings are executor controls,
+not OS isolation.
 
-Human clarification, approval execution and knowledge tools report unavailability until
+Human clarification and knowledge tools report unavailability until
 their services are integrated; clarification still validates that the gap is blocking. Page markers and deterministic guards
 are tested with Chromium. End-to-end agent behavior for prompt injection and actual
 executor permission denials remain separate acceptance checks; model-written statements

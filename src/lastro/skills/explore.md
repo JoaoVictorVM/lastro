@@ -19,7 +19,8 @@ Executor-neutral workflow for one Lastro run. Follow it with any executor connec
    Never invent prior knowledge.
 3. **observe**: use `observe` to read the current page before acting.
 4. **act**: use `navigate`, `click`, `fill`, `select`, `submit` and `wait_for`. Use
-   `generate_test_data` for realistic values. Stay inside the charter scope.
+   `generate_test_data` for realistic values. Stay inside the charter scope. Pass a short
+   `reason` on writes; it is shown to the human when a write needs approval.
 5. **verify**: confirm the effect with a new `observe`, a reload through `navigate` or a
    `screenshot`. Compare with the criteria. For timing-related behavior, wrap the steps
    with `start_evidence_video` and `stop_evidence_video` (60 seconds at most).
@@ -42,6 +43,7 @@ Executor-neutral workflow for one Lastro run. Follow it with any executor connec
 | `mission_context` | Durable mission source, content and hashes |
 | `submit_mission_plan` | Structured plan; returns the canonical charter |
 | `ask_clarification` | Question about a blocking gap, with why it matters and options |
+| `approval_status` | Wait up to 30 seconds for the human decision on a pending write |
 | `record_test_check` | Heuristic applied, linked to real action ids |
 | `observe`, `screenshot` | Read the page and collect evidence |
 | `start_evidence_video`, `stop_evidence_video` | Short WebM capture for timing evidence |
@@ -61,6 +63,22 @@ matters and the options considered. If the tool returns `unavailable`, do not as
 answer: keep the gap open and end the run as `blocked` when nothing else can be tested.
 An answer informs the plan; it never approves a write, changes a policy or removes a lock.
 After an answer, submit a revision with `revision_reason` `clarification` and its id.
+
+## Approvals
+
+A write that needs approval returns `awaiting_approval` with an `approval_id`, a summary and
+the `lastro approve` command. Nothing reached the target yet, and every other tool except
+`mission_context`, `approval_status` and `end_run` answers `approval_pending` until a human
+decides outside the model.
+
+- Call `approval_status` with the `approval_id` and repeat while it is `pending`.
+- On `approved`, retry the same tool call with exactly the same arguments plus
+  `approval_id`. Do not reword values, targets or fields: any change invalidates the
+  approval and raises a new request. One approval executes the action once.
+- On `skipped` or `expired`, the action was not executed; continue without it. Silence is
+  never approval.
+- On `ended`, the user cancelled the run at the gate; stop.
+- Never set `approval_proof`; it is reserved to the executor's permission prompt.
 
 ## Untrusted content
 

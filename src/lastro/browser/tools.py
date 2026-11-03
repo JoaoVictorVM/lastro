@@ -10,17 +10,20 @@ from typing import Any, Literal, Protocol, cast
 from urllib.parse import urljoin, urlsplit
 
 from playwright.async_api import Locator, Page
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
+from lastro.approvals import UNKNOWN_VALUE, ApprovalAction, ApprovalStatusInput, FieldChange
+from lastro.approvals.gate import ApprovalGate, Notifier, awaiting_response, describe
 from lastro.browser.bindings import ExpectedRequest, path_parameters
 from lastro.browser.events import record_call
 from lastro.browser.policy import Action, Decision
-from lastro.browser.session import BrowserSession
+from lastro.browser.session import BrowserSession, initial_value
 from lastro.browser.video import EvidenceVideoRecorder, VideoError
 from lastro.config.loader import ProjectContext
 from lastro.config.policy import Binding, Strict, Target
 from lastro.config.schema import is_same_origin
 from lastro.history import (
+    ApprovalStatus,
     ArtifactType,
     Clarification,
     EventType,
@@ -31,7 +34,7 @@ from lastro.history import (
     ReportingError,
     RunStatus,
 )
-from lastro.history.redaction import preview, redact_text
+from lastro.history.redaction import canonical_json, preview, redact, redact_text, sha256_hex
 from lastro.history.runs import config_snapshot
 from lastro.mission import (
     ClarificationInput,
@@ -71,6 +74,7 @@ TOOLS = (
     "start_evidence_video",
     "stop_evidence_video",
     "ask_clarification",
+    "approval_status",
     "end_run",
     "generate_test_data",
     "knowledge_query",
@@ -85,6 +89,11 @@ MISSION_START = (
 MISSION_END = "\n</mission-content>"
 MISSION_PLAN_REQUIRED = "mission_plan_required"
 CLARIFICATION_REQUIRED = "clarification_required"
+EFFECT_TOOLS = frozenset({"click", "fill", "select", "submit"})
+# Enquanto um pedido aguarda decisão, só contexto, status e encerramento controlado seguem.
+WAITING_TOOLS = frozenset({"mission_context", "end_run"})
+SECRET_ARGUMENTS = frozenset({"value", "approval_proof"})
+LOCAL_EFFECT = "Changes the form field in the browser only; nothing is sent until submit."
 
 
 class NoArguments(Strict):
@@ -103,6 +112,7 @@ INPUT_MODELS: dict[str, type[BaseModel]] = {
     "record_test_check": HeuristicCheckInput,
     "ask_clarification": ClarificationInput,
 }
+STATUS_MODELS: dict[str, type[BaseModel]] = {"approval_status": ApprovalStatusInput}
 
 
 # Contratos próprios das tools de evidência; o catálogo MCP publica estes schemas.
@@ -121,12 +131,17 @@ class Arguments(Strict):
     timeout_ms: int = Field(default=5000, ge=1, le=30000)
     outcome: Literal["completed", "blocked"] = "completed"
     reason: str = Field(default="", max_length=2000)
+    # Campos reservados do retry aprovado; não entram no fingerprint e a prova nunca é gravada.
+    approval_id: str | None = Field(default=None, min_length=1, max_length=200)
+    approval_proof: str | None = Field(default=None, min_length=1, max_length=2000)
 
 
 def input_schema(name: str) -> dict[str, Any]:
     if name == "generate_test_data":
         return TestDataRequest.model_json_schema()
-    model = INPUT_MODELS.get(name) or REPORTING_MODELS.get(name) or Arguments
+    model = (
+        INPUT_MODELS.get(name) or REPORTING_MODELS.get(name) or STATUS_MODELS.get(name) or Arguments
+    )
     return model.model_json_schema()
 
 
@@ -262,10 +277,14 @@ class BrowserTools:
         run_id: str,
         clock: Callable[[], datetime] = utc_now,
         clarifications: ClarificationChannel | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self.project, self.history, self.run_id = project, history, run_id
         self.clock = clock
         self.clarifications = clarifications
+        self.approvals = ApprovalGate(history, run_id, notifier=notifier, clock=clock)
+        self.proofs: Callable[[str, str], bool] | None = None
+        self.waiting_ok = False
         self.snapshot = config_snapshot(project)
         self.session = BrowserSession(project, history, run_id, self.active)
         self.provenance = self.session.provenance
@@ -273,23 +292,106 @@ class BrowserTools:
 
     def active(self) -> None:
         run = self.history.get_active_run(self.run_id)
-        if run is None or run.status != RunStatus.RUNNING:
+        waiting = self.waiting_ok and run is not None and run.status == RunStatus.AWAITING_APPROVAL
+        if run is None or (run.status != RunStatus.RUNNING and not waiting):
             raise ValueError(NO_RUN)
         if run.config_snapshot != self.snapshot:
             raise ValueError("Configuration changed; start a new run.")
 
     async def call(self, name: str, raw: dict[str, Any]) -> dict[str, Any]:
+        if name == "approval_status":
+            return await self.approval_status(raw)
         async with self.session.lock:
+            with contextlib.suppress(Exception):
+                self.approvals.reconcile()
             try:
-                self.active()
-            except Exception:
-                return {"error": NO_RUN}
-            action_id = uuid.uuid4().hex
-            result = await self.dispatch(name, raw, action_id)
+                waiting = self.while_waiting(name, raw)
+                if waiting is not None:
+                    return waiting
+                try:
+                    self.active()
+                except Exception:
+                    await self.release_if_terminal()
+                    return {"error": NO_RUN}
+                action_id = uuid.uuid4().hex
+                result = await self.dispatch(name, raw, action_id)
+            finally:
+                self.waiting_ok = False
             # O agente cita esses ids em record_test_check; sem eles a heurística não é provável.
             if "error" not in result:
                 result.setdefault("action_id", action_id)
             return result
+
+    def while_waiting(self, name: str, raw: dict[str, Any]) -> dict[str, Any] | None:
+        """Recusa tools enquanto há pedido pendente, salvo o retry com prova do adapter."""
+        run = self.history.get_active_run(self.run_id)
+        if run is None or run.status != RunStatus.AWAITING_APPROVAL:
+            return None
+        pending = self.approvals.pending()
+        if pending is None:
+            return None
+        if name in WAITING_TOOLS:
+            self.waiting_ok = True
+            return None
+        proof = raw.get("approval_proof")
+        reason = "approval_pending"
+        if name in EFFECT_TOOLS and raw.get("approval_id") == pending.action_id and proof:
+            if (
+                isinstance(proof, str)
+                and self.proofs is not None
+                and self.proofs(pending.action_id, proof)
+            ):
+                return None
+            reason = "invalid_approval_proof"
+        with contextlib.suppress(Exception):
+            record_call(
+                self.history,
+                self.run_id,
+                uuid.uuid4().hex,
+                name,
+                {key: value for key, value in raw.items() if key not in SECRET_ARGUMENTS},
+                Decision("deny", reason, ""),
+            )
+        return {**awaiting_response(pending), "reason": reason}
+
+    async def release_if_terminal(self) -> None:
+        """Run terminada fora deste processo: engaja o lock e fecha captura e browser."""
+        with contextlib.suppress(Exception):
+            if not self.history.get_run(self.run_id).status.is_terminal:
+                return
+            self.session.policy.locks.add("run_ended")
+            self.approvals.close()
+            try:
+                await self.video.close()
+            finally:
+                await self.session.close()
+
+    async def approval_status(self, raw: dict[str, Any]) -> dict[str, Any]:
+        # Uma run cancelada no gate continua consultável: o agente precisa ver a decisão `ended`.
+        try:
+            self.history.get_run(self.run_id)
+        except Exception:
+            return {"error": NO_RUN}
+        try:
+            parsed = ApprovalStatusInput.model_validate(raw)
+        except ValidationError:
+            return {"error": "invalid_approval_status"}
+        with contextlib.suppress(Exception):
+            record_call(
+                self.history,
+                self.run_id,
+                uuid.uuid4().hex,
+                "approval_status",
+                raw,
+                Decision("allow", "metadata", ""),
+            )
+        record = await self.approvals.status(parsed.approval_id, parsed.wait_seconds)
+        if record is None:
+            return {"error": "approval_not_found", "approval_id": parsed.approval_id}
+        if record.status == ApprovalStatus.ENDED:
+            async with self.session.lock:
+                await self.release_if_terminal()
+        return describe(record)
 
     async def dispatch(self, name: str, raw: dict[str, Any], action_id: str) -> dict[str, Any]:
         recorded = False
@@ -349,8 +451,9 @@ class BrowserTools:
                 else Decision("allow", "metadata", "")
             )
             operation: Any = None
-            if name in {"click", "fill", "select", "submit"}:
-                operation, decision = await self.prepare(name, args, action_id)
+            view: ApprovalAction | None = None
+            if name in EFFECT_TOOLS:
+                operation, decision, view = await self.prepare(name, args, action_id)
             elif name == "navigate" and (
                 args.url is None or not is_same_origin(args.url, self.project.profile.target_url)
             ):
@@ -360,11 +463,13 @@ class BrowserTools:
                 self.run_id,
                 action_id,
                 name,
-                {key: value for key, value in raw.items() if key != "value"},
+                {key: value for key, value in raw.items() if key not in SECRET_ARGUMENTS},
                 decision,
             )
             recorded = True
             self.active()
+            if decision.effect == "require_approval" and view is not None:
+                return await self.approval_flow(args, action_id, operation, view)
             if decision.effect != "allow":
                 return {
                     "decision": decision.effect,
@@ -524,8 +629,41 @@ class BrowserTools:
         assert isinstance(details, StopVideoInput)
         return await self.video.stop(details.recording_id)
 
+    async def approval_flow(
+        self, args: Arguments, action_id: str, operation: Any, view: ApprovalAction
+    ) -> dict[str, Any]:
+        """Primeira tentativa pede; o retry com approval_id executa uma vez ou pede de novo."""
+        if args.approval_id is None:
+            return await self.approvals.request(view, action_id)
+        outcome = self.approvals.retry(args.approval_id, view, action_id)
+        if outcome.kind == "changed":
+            return await self.approvals.renew(outcome, view, action_id)
+        if outcome.kind == "pending" and outcome.record is not None:
+            return awaiting_response(outcome.record)
+        if outcome.kind != "execute":
+            result: dict[str, Any] = {
+                "decision": "not_executed",
+                "reason": outcome.reason,
+                "approval_id": args.approval_id,
+            }
+            if outcome.record is not None:
+                result.update(
+                    approval_status=outcome.record.status.value,
+                    next=describe(outcome.record)["next"],
+                )
+            return result
+        try:
+            executed = await operation()
+        except Exception as error:
+            code = preview(redact_text(self.session.sanitize(str(error))), 200) or "error"
+            self.approvals.execution_failed(args.approval_id, code)
+            raise
+        return {**executed, "approval_id": args.approval_id, "approval_status": "consumed"}
+
     async def end_run(self, args: Arguments) -> dict[str, Any]:
         """Fecha a captura e o browser, sela critérios com a run ativa e só então termina."""
+        self.approvals.skip_pending("run_ended_by_agent")
+        self.approvals.close()
         try:
             await self.video.close()
         finally:
@@ -549,12 +687,14 @@ class BrowserTools:
             result["report_error"] = report.snapshot.error_text
         return result
 
-    async def prepare(self, name: str, args: Arguments, action_id: str) -> tuple[Any, Decision]:
+    async def prepare(
+        self, name: str, args: Arguments, action_id: str
+    ) -> tuple[Any, Decision, ApprovalAction | None]:
         if args.target is None:
             raise ValueError("target required")
         label = args.target.name or args.target.label or ""
         if self.session.policy.destructive(label):
-            return None, Decision("deny", "no-destructive", "")
+            return None, Decision("deny", "no-destructive", ""), None
         page = await self.session.start()
         locator = locate(page, args.target)
         count = await locator.count()
@@ -565,14 +705,14 @@ class BrowserTools:
         if name == "click" and await locator.get_attribute("href") is not None:
             href = urljoin(page.url, await locator.get_attribute("href") or "")
             if not is_same_origin(href, self.project.profile.target_url):
-                return None, Decision("deny", "outside_target", "")
+                return None, Decision("deny", "outside_target", ""), None
 
             async def navigate_link() -> dict[str, str]:
                 self.session.mark_action(page, action_id)
                 await page.goto(href)
                 return {"status": "ok"}
 
-            return navigate_link, self.session.policy.decide(Action("read"), False)
+            return navigate_link, self.session.policy.decide(Action("read"), False), None
         bindings: list[Binding] = []
         for binding in self.project.profile.policy.bindings:
             if path_parameters(binding.route, urlsplit(page.url).path) is None:
@@ -584,7 +724,7 @@ class BrowserTools:
             elif binding.target == args.target:
                 bindings.append(binding)
         if len(bindings) != 1:
-            return None, Decision("deny", "ambiguous_binding", "")
+            return None, Decision("deny", "ambiguous_binding", ""), None
         binding = bindings[0]
         parameters = path_parameters(binding.route, urlsplit(page.url).path) or {}
         record_id = parameters.get(binding.record_parameter, "")
@@ -594,6 +734,7 @@ class BrowserTools:
         if binding.form and await form.get_attribute("id") != binding.form:
             raise ValueError("form_mismatch")
         values: dict[str, str] = {}
+        initial: dict[str, str | None] = {}
         controls = form.locator("input[name], select[name], textarea[name]")
         for i in range(await controls.count()):
             control = controls.nth(i)
@@ -601,36 +742,104 @@ class BrowserTools:
             if key is None or key in values:
                 raise ValueError("ambiguous_field")
             values[key] = await control.input_value()
+            initial[key] = await initial_value(control)
+        current = dict(values)
+        form_id = await form.get_attribute("id")
+        route = urlsplit(page.url).path
         if binding.request is not None and binding.request.id_field:
             body_id = values.get(binding.request.id_field, "")
             if record_id and body_id != record_id:
-                return None, Decision("deny", "record_id_mismatch", "")
+                return None, Decision("deny", "record_id_mismatch", ""), None
             record_id = body_id
         if binding.operation == "update" and not record_id:
-            return None, Decision("deny", "missing_record_id", "")
+            return None, Decision("deny", "missing_record_id", ""), None
         allowed = set(binding.fields.values()) | set(binding.technical_fields)
         if not set(values) <= allowed:
-            return None, Decision("deny", "unmapped_field", "")
+            return None, Decision("deny", "unmapped_field", ""), None
         if name in {"fill", "select"}:
             key = await locator.get_attribute("name")
             if key is None or args.value is None:
                 raise ValueError("value required")
             if binding.request is not None and key == binding.request.id_field:
-                return None, Decision("deny", "immutable_record_id", "")
+                return None, Decision("deny", "immutable_record_id", ""), None
             values[key] = args.value
         if any(values.get(key) not in choices for key, choices in binding.field_values.items()):
-            return None, Decision("deny", "field_value_not_allowed", "")
+            return None, Decision("deny", "field_value_not_allowed", ""), None
         business = {key: values[field] for key, field in binding.fields.items() if field in values}
+        if name in {"fill", "select"}:
+            key = await locator.get_attribute("name") or ""
+            business_key = next((b for b, f in binding.fields.items() if f == key), key)
+            changes = ((business_key, current.get(key, UNKNOWN_VALUE), args.value or ""),)
+        else:
+            changes = tuple(
+                (key, initial.get(field) or UNKNOWN_VALUE, values[field])
+                for key, field in binding.fields.items()
+                if field in values and initial.get(field) != values[field]
+            )
+        # Valores originais e atuais do formulário: mudança feita por outra pessoa entre o pedido
+        # e o retry altera o digest e invalida a aprovação.
+        page_state = sha256_hex(
+            canonical_json(
+                redact(
+                    {
+                        "route": route,
+                        "form": form_id,
+                        "initial": {k: v or UNKNOWN_VALUE for k, v in initial.items()},
+                        "current": current,
+                    }
+                )
+            )
+        )
+        method = binding.request.method if binding.request else "GET"
+        request_path = binding.request.path if binding.request else ""
+        for key, value in parameters.items():
+            request_path = request_path.replace("{" + key + "}", value)
+        target = tuple(sorted(args.target.model_dump(exclude_none=True).items()))
         verified = await self.session.verify()
         action = Action(
             binding.operation,
             binding.entity,
             record_id,
             business,
-            binding.request.method if binding.request else "GET",
+            method,
             self.provenance.origin(binding.entity, record_id),
+            run_id=self.run_id,
+            tool=name,
+            route=route,
+            target=target,
+            changes=changes,
+            page_state=page_state,
         )
         decision = self.session.policy.decide(action, verified)
+        if name in {"fill", "select"}:
+            effects = (LOCAL_EFFECT,)
+        else:
+            outcome = "creates a new" if binding.operation == "create" else "changes the stored"
+            effects = (
+                f"Sends {method} {request_path} to the target and {outcome} "
+                f"{binding.entity} record.",
+            )
+        profile = self.project.profile
+        view = ApprovalAction(
+            tool=name,
+            run_id=self.run_id,
+            profile=self.project.profile_name,
+            environment_url=profile.target_url,
+            tenant=profile.tenant_id,
+            tenant_display=profile.tenant_display_name or profile.tenant_id,
+            entity=binding.entity,
+            record_id=record_id,
+            operation=binding.operation,
+            method=method,
+            route=route,
+            target=dict(target),
+            origin=action.origin,
+            changes=tuple(FieldChange(*change) for change in changes),
+            components=decision.components or {},
+            fingerprint=decision.fingerprint,
+            reason=args.reason,
+            known_effects=effects,
+        )
 
         async def execute_action() -> dict[str, str]:
             self.active()
@@ -668,7 +877,7 @@ class BrowserTools:
                     raise ValueError(self.session.tenant_mismatch)
             return {"status": "ok"}
 
-        return execute_action, decision
+        return execute_action, decision, view
 
     def test_data(self, request: TestDataRequest, action_id: str) -> dict[str, Any]:
         calls = [

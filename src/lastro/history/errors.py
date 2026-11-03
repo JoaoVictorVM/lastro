@@ -108,3 +108,24 @@ class ReportingError(HistoryError):
 
 class ReportConflictError(HistoryError):
     """Um snapshot pronto difere das entradas atuais; o arquivo existente nunca é sobrescrito."""
+
+
+def no_pending_approval_message(action_id: str) -> str:
+    return f"No pending approval with id {action_id}."
+
+
+class ApprovalError(HistoryError):
+    """Pedido ou decisão de aprovação recusados; code é estável para o MCP e para a CLI."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
+class ApprovalNotPendingError(ApprovalError):
+    """Id desconhecido, expirado ou já decidido: a mensagem é a mesma nos três casos."""
+
+    def __init__(self, action_id: str) -> None:
+        super().__init__("approval_not_pending", no_pending_approval_message(action_id))
+        self.action_id = action_id
