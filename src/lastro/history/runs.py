@@ -15,6 +15,7 @@ from lastro.history.errors import (
     RunNotFoundError,
 )
 from lastro.history.events import PreparedEvent, insert_event, prepare_event
+from lastro.history.knowledge import finalize_memory
 from lastro.history.layout import write_bytes_atomically
 from lastro.history.models import (
     MAX_MISSION_TEXT_LENGTH,
@@ -204,6 +205,8 @@ def apply_transition(
         (target.value, safe_reason, ended_at, run_id),
     )
     if target.is_terminal:
+        # Todo término passa por aqui: o resultado da memória sai na mesma transação.
+        finalize_memory(conn, run_id, target, timestamp)
         insert_event(conn, run_id, run_ended_event(target, safe_reason), timestamp)
     return select_run(conn, run_id)
 

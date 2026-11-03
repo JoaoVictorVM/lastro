@@ -229,7 +229,18 @@ No records were created.
 
 ## Memory outcome
 
+{% if report.memory_revision %}
+- Outcome: {{ report.memory_outcome | code }}
+- Effective changes: {{ report.memory_changed }}
+- Pending proposals: {{ report.memory_pending }}
+- Outcome revision: {{ report.memory_revision }}
+{% if report.memory_pending %}
+
+Pending proposals stay out of memory until `lastro knowledge consolidate {{ report.run_id | inline }}` succeeds.
+{% endif %}
+{% else %}
 {{ report.memory_outcome | inline }}
+{% endif %}
 
 ## Limitations
 

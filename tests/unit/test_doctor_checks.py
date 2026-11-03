@@ -386,3 +386,11 @@ def test_each_documented_misconfiguration_detected(
         if r.number != number and r.number not in consequences and r.status is not Status.OK
     ]
     assert others == [], others
+
+
+def test_storage_check_reports_missing_fts5(tmp_path: Path) -> None:
+    result = checks.check_private_root_writable(tmp_path / "root", lambda: False)
+
+    assert result.status is Status.FAIL
+    assert "fts5_unavailable" in result.detail
+    assert checks.sqlite_fts5_available() is True

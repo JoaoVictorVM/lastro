@@ -83,6 +83,7 @@ ALL_COMMANDS = [
     "data",
     "report",
     "approve",
+    "knowledge",
     *STUB_COMMANDS,
 ]
 # Typer forces colored help when GITHUB_ACTIONS is set, so CI output carries ANSI escapes.

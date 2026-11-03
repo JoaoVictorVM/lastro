@@ -3,6 +3,7 @@
 import importlib.util
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -153,6 +154,7 @@ class DoctorEnvironment:
     git_check_ignore: Callable[[Path], bool | None] = git_check_ignore
     environ: Mapping[str, str] = field(default_factory=lambda: os.environ)
     http_timeout: float = HTTP_TIMEOUT_SECONDS
+    fts5_available: Callable[[], bool] = lambda: sqlite_fts5_available()
 
 
 def check_python(env: DoctorEnvironment) -> CheckResult:
@@ -259,7 +261,21 @@ def check_credential_vars(env: DoctorEnvironment, profiles: Sequence[Profile]) -
     return _ok(6, NAME_CREDENTIAL_VARS, f"todas definidas ({total})")
 
 
-def check_private_root_writable(root: Path) -> CheckResult:
+def sqlite_fts5_available() -> bool:
+    """A memória exige FTS5 no SQLite efetivamente carregado pelo Python; não há fallback."""
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("CREATE VIRTUAL TABLE probe USING fts5(value)")
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        conn.close()
+    return True
+
+
+def check_private_root_writable(
+    root: Path, fts5_available: Callable[[], bool] = sqlite_fts5_available
+) -> CheckResult:
     try:
         ensure_writable(root)
     except OSError as exc:
@@ -268,6 +284,13 @@ def check_private_root_writable(root: Path) -> CheckResult:
             NAME_ROOT_WRITABLE,
             f"{root}: {exc.strerror or type(exc).__name__}",
             "Ajuste as permissões ou defina private_data_root para uma pasta gravável.",
+        )
+    if not fts5_available():
+        return _fail(
+            7,
+            NAME_ROOT_WRITABLE,
+            f"fts5_unavailable: o SQLite {sqlite3.sqlite_version} não oferece FTS5",
+            "Instale um Python cujo SQLite tenha FTS5; a busca da memória não tem alternativa.",
         )
     return _ok(7, NAME_ROOT_WRITABLE, str(root))
 

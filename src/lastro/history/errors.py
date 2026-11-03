@@ -129,3 +129,13 @@ class ApprovalNotPendingError(ApprovalError):
     def __init__(self, action_id: str) -> None:
         super().__init__("approval_not_pending", no_pending_approval_message(action_id))
         self.action_id = action_id
+
+
+class KnowledgeError(HistoryError):
+    """Operação de memória recusada; code é estável para o MCP e para a CLI."""
+
+    def __init__(self, code: str, detail: str, *, current_revision: int | None = None) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+        self.current_revision = current_revision

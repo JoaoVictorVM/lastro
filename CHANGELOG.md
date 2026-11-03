@@ -44,6 +44,12 @@ list the intended scope and contain no shipped changes until their release date 
   prompt, executed exactly once only when the recomputed fingerprint matches, skipped after
   15 minutes without response, and announced by a desktop notification with an audited
   fallback to the `lastro tail` banner and bell.
+- Persistent memory: typed facts with provenance, scope, revisions and history in the project
+  database, `knowledge_query` with FTS5 search, staleness and a 10 entry and 4,000 character
+  budget, `knowledge_propose` that refuses instructions, `knowledge_revalidate` against a
+  current observation, consolidation with contested alternatives when a run ends, one memory
+  outcome per run with private fallback and retry, and `lastro knowledge` commands for human
+  review.
 
 ## [1.0.0] - Planned
 

@@ -374,6 +374,111 @@ the fallback: it prints an `APPROVAL REQUIRED` banner with the summary and comma
 the terminal bell once for a request that is still pending when stdout is a TTY, and shows
 outcomes such as `approved by user at 14:32` or `skipped (no response) at 14:47`.
 
+## Persistent memory
+
+Lastro keeps structured facts about the target in the project history, so a later run can
+start from what an earlier run observed. Facts are context, never authority: they never
+change policies, approvals, locks or the mission plan, and the agent must confirm them in
+the current interface before relying on them.
+
+### Facts, sources and states
+
+The agent proposes typed facts with `knowledge_propose`; free text from the page is never
+stored as a statement. The statement is rendered from the fact.
+
+| Fact | Category | Fields |
+|---|---|---|
+| `field_property` | `screen_component` | `subject`, `field`, `attribute` (`required`, `format`, `visible`, `enabled`) and `value` |
+| `screen` | `screen_component` | `route` and up to 20 `landmarks` (role and quoted label) |
+| `flow_step` | `flow` | `origin`, `destination` and `action` (`navigate`, `click`, `submit`) |
+| `clarification` | `rule_clarification` | `gap_id` and `subject`; the answer is read from the human answer |
+| `experience` | `experience` | `attempt`, `outcome` (`success`, `failure`, `blocked`, `not_found_in_context`), `context` with `route` and `observation_id`, optional quoted `message` |
+
+Keys (`flow`, `subject`, `field`) use 1 to 80 characters in `[a-z0-9_.-]`. Quoted labels and
+messages have 1 to 199 characters. Every observation fact cites 1 to 10 `observation_ids` of
+the same run, and routes must match those observations: `observe` returns an
+`observation_id` and stores a projection with the route, title, landmarks and field
+properties, never typed values. A `clarification` fact needs the `clarification_id` of an
+answer written through the human channel; the agent cannot claim the `user` source.
+
+States are `observed`, `user_provided` and `contested`. Sources are `observation`, `user`,
+`documentation`, `code` and `issue`; the last three are reserved for trusted adapters, and a
+code source is always recorded as inferred implementation.
+
+Proposals that address the agent, such as `ignore previous instructions`, are refused with
+`Knowledge proposals must be facts about the system, not instructions.` and audited as
+`possible_injection` with a hash, without the raw text. This check is an extra layer: the
+closed schemas, delimited content and deterministic policies are what keep memory inert.
+
+### Scope and isolation
+
+Facts proposed by the agent are scoped to the run's profile, environment (canonical base URL)
+and tenant. A `blocked` experience depends on who is logged in; without an observable account
+it stays visible only to the run that produced it. Broader scopes exist only through human
+action.
+
+### Consulting memory
+
+`knowledge_query` takes `flow`, an optional `query` (up to 200 characters, matched as
+literal terms with SQLite FTS5 and BM25) and `limit` (1 to 10). The response carries at most
+10 entries and 4,000 characters of serialized entries inside `<untrusted-content>`; whole
+entries are left out when they do not fit, and `truncated` says so. Each entry includes its
+id, revision, statement, state, source, scope, system version, last verification,
+`stale`, `stale_reasons`, `version_unknown`, `requires_revalidation` and `conflict_ids`.
+
+An entry is stale when it was never verified, when the last verification is more than 30
+days old (exactly 30 days is not stale) or when the recorded system version differs from
+the run's version. A missing version is reported as `version_unknown` and still requires
+revalidation. `contested` is never safe, whatever its age.
+
+Each run records the exact revision it read. Human changes to an entry that a running run
+uses are deferred until that run ends.
+
+### Revalidation
+
+`knowledge_revalidate` takes `entry_id`, `expected_revision`, an `observation_id` from the
+current run and an `idempotency_key`. Screen landmarks and the `required`, `visible` and
+`enabled` field properties are checked in code; a match records a new verification and the
+observation as evidence. A divergence returns `mismatch` with a pending alternative proposal
+and keeps the original entry. Other facts return `manual_verification_required`, and an
+incomplete projection never proves absence.
+
+### Consolidation and memory outcome
+
+Proposals stay pending until the run ends. On the terminal transition Lastro deduplicates by
+scope, fact key and value hash, adds evidence to equal facts and marks every incompatible
+alternative `contested`; no source wins automatically. A single failure stays a contextual
+experience. Cancelled runs and runs whose owner process died never promote pending
+proposals.
+
+Every run that ends after this version has exactly one memory outcome: `updated`,
+`nothing_new`, `consolidation_pending` or `persistence_failed`. `end_run` returns it as
+`memory_outcome`, and the report shows it with the pending count. A memory error never
+changes findings or verdicts and never keeps the browser open. When the terminal write
+fails, the confirmed proposals go to `runs/<run id>/knowledge_pending.json`, which is
+imported once before the next run. `lastro knowledge consolidate <run id>` retries a
+pending consolidation; the outcome row is updated, the previous result stays in the attempt
+log, and the next report is written to a new file (`report.memory-r2.md`) without
+overwriting the earlier one. Runs from before this version show `not recorded`.
+
+### Human management
+
+| Command | Effect |
+|---|---|
+| `lastro knowledge list [--flow] [--state] [--stale] [--page] [--page-size] [--json]` | Statements with state, source, scope and last verification; contested entries list their alternatives |
+| `lastro knowledge show <id> [--json]` | Fact, evidence, versions, history, alternatives and deferred changes |
+| `lastro knowledge edit <id> --file <json> --expected-revision <n> --reason <text>` | New human revision; `discard_alternatives` in the file resolves a conflict |
+| `lastro knowledge discard <id> --expected-revision <n> --reason <text>` | Logical discard; the entry leaves search and stays auditable |
+| `lastro knowledge revalidate <id> --expected-revision <n> --reason <text> [--system-version <v>]` | Dated human attestation without opening a browser |
+| `lastro knowledge consolidate <run id>` | Idempotent retry for a terminal run |
+
+The edit file holds only `fact` and optionally `discard_alternatives`; source, run, dates and
+evidence cannot be changed. Every effective change appends to the entry history with actor
+and reason. An outdated `--expected-revision` exits 1 and prints the current revision.
+
+`lastro doctor` fails the storage check when the SQLite used by Python lacks FTS5; there is
+no fallback search.
+
 ## Executor configuration and current boundaries
 
 `lastro init` preserves existing files and generates `.mcp.json` plus Claude Code settings.
@@ -386,8 +491,8 @@ updates settings identical to a previously published version; locally edited set
 preserved and init reports which hooks are missing. These settings are executor controls,
 not OS isolation.
 
-Human clarification and knowledge tools report unavailability until
-their services are integrated; clarification still validates that the gap is blocking. Page markers and deterministic guards
+Clarification reports unavailability while no human channel is connected and still
+validates that the gap is blocking. Page markers and deterministic guards
 are tested with Chromium. End-to-end agent behavior for prompt injection and actual
 executor permission denials remain separate acceptance checks; model-written statements
 about denied tools are not accepted as evidence.

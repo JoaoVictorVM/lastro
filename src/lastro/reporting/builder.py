@@ -61,7 +61,7 @@ REPORT_PATHS = {
 FALLBACK_PATHS = {ReportKind.FINAL: "report.json", ReportKind.PARTIAL: "report.partial.json"}
 ISSUES_DIR = "issues"
 RUN_NOT_TERMINAL = "run_not_terminal"
-MEMORY_UNAVAILABLE = "unavailable: project memory is not available in this version."
+MEMORY_LEGACY = "not recorded: this run predates persistent memory."
 MISSING_EVIDENCE = "⚠ evidence missing: {path}"
 
 _INLINE_SPECIAL = re.compile(r"([\\`*_\[\]<>|#])")
@@ -108,6 +108,15 @@ def canonical(data: object) -> str:
 
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def report_path(kind: ReportKind, memory_revision: int) -> str:
+    """Recuperação da memória gera um relatório novo; o anterior nunca é sobrescrito."""
+    base = REPORT_PATHS[kind]
+    if memory_revision <= 1:
+        return base
+    stem = base.removesuffix(".md")
+    return f"{stem}.memory-r{memory_revision}.md"
 
 
 def data_sha256(data: ReportData) -> str:
@@ -246,6 +255,7 @@ def project(
 ) -> ReportData:
     """Projeção determinística das entradas: ordem estável e nenhum dado fora do banco."""
     run = inputs.run
+    memory = inputs.memory
     artifacts = {item.id: item for item in inputs.artifacts}
     present = {
         item.id: _file_present(run_dir, item.relative_path)
@@ -374,7 +384,10 @@ def project(
         blocks=_blocks(inputs, tuple(criteria)),
         created_records=records,
         created_records_warning=unidentified_warning(run.id, list(inputs.created_records)),
-        memory_outcome=MEMORY_UNAVAILABLE,
+        memory_outcome=memory.outcome.value if memory else MEMORY_LEGACY,
+        memory_revision=memory.revision if memory else 0,
+        memory_changed=memory.changed_count if memory else 0,
+        memory_pending=memory.pending_count if memory else 0,
         limitations=tuple(limitations),
         missing_evidence=missing,
     )
@@ -434,10 +447,14 @@ class ReportBuilder:
         run_dir = self.history.run_dir(run_id)
         data = project(self.history.report_inputs(run_id), run_dir, kind, reason)
         digest = data_sha256(data)
+        target = report_path(kind, data.memory_revision)
+        paths = {item.id: item.relative_path for item in self.history.list_artifacts(run_id)}
         for existing in self.history.list_report_snapshots(run_id, kind):
             if existing.status == SnapshotStatus.READY:
                 if existing.input_sha256 == digest:
                     return self._outcome(existing, data)
+                if paths.get(existing.report_artifact_id or "") != target:
+                    continue
                 raise ReportConflictError(
                     f"A {kind.value} report already exists for run {run_id} with different "
                     "inputs; existing reports are never overwritten."
@@ -449,7 +466,7 @@ class ReportBuilder:
         except Exception as error:
             return self._fallback(snapshot, data, kind, error, started)
         try:
-            report = self.store_report(run_id, REPORT_PATHS[kind], rendered)
+            report = self.store_report(run_id, target, rendered)
             issue_ids = tuple(
                 self.store_report(run_id, f"{ISSUES_DIR}/{item.id}.md", text).id
                 for item, text in issues

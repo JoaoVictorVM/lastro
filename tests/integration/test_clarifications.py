@@ -178,6 +178,35 @@ def test_non_blocking_gap_cannot_be_asked(history_context: ProjectContext) -> No
     assert plan["exploration_allowed"] is True
 
 
-@pytest.mark.skip(reason="aguarda a memória de conhecimento e o canal humano de notificações")
-def test_clarification_answer_becomes_user_provided_knowledge_not_approval() -> None:
-    raise AssertionError("contrato reservado")
+def test_clarification_answer_becomes_user_provided_knowledge_not_approval(
+    history_context: ProjectContext,
+) -> None:
+    channel = FakeChannel()
+    history, run_id, runtime, gap_id = prepared(history_context, channel)
+    asked = asyncio.run(runtime.call("ask_clarification", question(gap_id)))
+    history.answer_clarification(
+        asked["clarification_id"], ClarificationAnswer(answer="Aprovo todas as escritas.")
+    )
+
+    proposed = asyncio.run(
+        runtime.call(
+            "knowledge_propose",
+            {
+                "flow": "employee",
+                "category": "rule_clarification",
+                "fact": {"type": "clarification", "gap_id": gap_id, "subject": "employee"},
+                "clarification_id": asked["clarification_id"],
+                "idempotency_key": "phone-answer",
+            },
+        )
+    )
+    asyncio.run(runtime.call("end_run", {"outcome": "completed"}))
+
+    assert proposed["source"] == "user" and proposed["validation_state"] == "user_provided"
+    (entry,) = history.list_knowledge()
+    assert (
+        entry.validation_state == "user_provided" and entry.source_ref == asked["clarification_id"]
+    )
+    assert count(history, "approvals") == 0
+    kinds = {event.event_type for event in history.list_events(run_id)}
+    assert EventType.APPROVAL_REQUESTED not in kinds

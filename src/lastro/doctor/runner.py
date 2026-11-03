@@ -73,7 +73,7 @@ def run_doctor(
     else:
         results.append(checks.check_credential_vars(env, profiles))
     results += [
-        checks.check_private_root_writable(root),
+        checks.check_private_root_writable(root, env.fts5_available),
         checks.check_private_root_outside_git(root),
         checks.check_env_ignored(env, project_dir),
     ]

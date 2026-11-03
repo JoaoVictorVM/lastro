@@ -14,7 +14,7 @@ from pathlib import Path
 
 from lastro import get_version
 from lastro.config.loader import LoadedConfig, ProjectContext
-from lastro.history import approvals
+from lastro.history import approvals, knowledge
 from lastro.history.artifacts import (
     StoredFile,
     insert_artifact,
@@ -38,6 +38,7 @@ from lastro.history.errors import (
     HistoryUnavailableError,
     InvalidEventError,
     InvalidTransitionError,
+    KnowledgeError,
     MissionPlanError,
     RunNotActiveError,
 )
@@ -47,6 +48,14 @@ from lastro.history.events import (
     prepare_event,
     select_events,
     write_fallback,
+)
+from lastro.history.knowledge_recovery import (
+    FallbackError,
+    export_fallback,
+    fallback_path,
+    find_fallbacks,
+    load_fallback,
+    mark_imported,
 )
 from lastro.history.layout import MISSION_SNAPSHOT_RELATIVE, HistoryLayout
 from lastro.history.migrations import apply_migrations
@@ -117,6 +126,7 @@ from lastro.history.models import (
 from lastro.history.oracles import record_signal, select_signals
 from lastro.history.processes import ProcessChecker, process_exists
 from lastro.history.queries import select_runs
+from lastro.history.redaction import redact_text
 from lastro.history.reporting import (
     check_criterion_result,
     check_finding,
@@ -145,6 +155,27 @@ from lastro.history.runs import (
     select_run,
     validate_mission,
 )
+from lastro.knowledge import (
+    Category,
+    ConsolidationAttempt,
+    EditDocument,
+    KnowledgeDetail,
+    KnowledgeEntry,
+    MemoryOutcome,
+    MutationOperation,
+    MutationResult,
+    ObservationRecord,
+    ProposalInput,
+    ProposalReceipt,
+    QueryInput,
+    QueryResult,
+    RevalidateInput,
+    RevalidationResult,
+    Scope,
+    SourceType,
+    ValidationState,
+)
+from lastro.knowledge.models import Fact
 from lastro.mission.charter import DEFAULT_MAX_TIMEBOX_MINUTES, build_charter
 from lastro.mission.models import (
     ClarificationAnswer,
@@ -335,9 +366,14 @@ class HistoryStore:
     ) -> RunRecord:
         target = RunStatus(status)
         timestamp = self._now()
-        record = self._database.write(
-            lambda conn: apply_transition(conn, run_id, target, reason, timestamp)
-        )
+        try:
+            record = self._database.write(
+                lambda conn: apply_transition(conn, run_id, target, reason, timestamp)
+            )
+        except HistoryUnavailableError as exc:
+            if target.is_terminal:
+                self._export_memory_fallback(run_id, str(exc), timestamp)
+            raise
         if record.status.is_terminal:
             clear_active_pointer(self._layout.active_run, run_id)
         return record
@@ -369,6 +405,238 @@ class HistoryStore:
         for run_id in lost:
             clear_active_pointer(self._layout.active_run, run_id)
         return lost
+
+    def _export_memory_fallback(self, run_id: str, error: str, timestamp: str) -> None:
+        """Propostas confirmadas vão para a pasta privada; a leitura também pode falhar."""
+        proposals: list[JsonObject] = []
+        with contextlib.suppress(HistoryError, sqlite3.Error):
+            proposals = self._database.read(lambda conn: knowledge.pending_snapshot(conn, run_id))
+        with contextlib.suppress(OSError):
+            export_fallback(
+                self._layout.run_dir(run_id),
+                project_id=self.project_id,
+                run_id=run_id,
+                proposals=proposals,
+                error=error,
+                timestamp=timestamp,
+            )
+
+    def recover_memory_fallbacks(self) -> list[str]:
+        """Importa fallbacks de runs já terminais antes de iniciar uma nova run."""
+        recovered: list[str] = []
+        for path in find_fallbacks(self._layout.runs_dir):
+            try:
+                fallback = load_fallback(path, self.project_id)
+                record = self.get_run(fallback.run_id)
+            except (FallbackError, OSError, HistoryError):
+                continue
+            if not record.status.is_terminal:
+                continue
+            timestamp = self._now()
+            self._database.write(
+                lambda conn, item=fallback, moment=timestamp: knowledge.retry_consolidation(
+                    conn,
+                    self.project_id,
+                    item.run_id,
+                    item.attempt_key,
+                    moment,
+                    fallback=item.proposals,
+                )
+            )
+            with contextlib.suppress(OSError):
+                mark_imported(path)
+            recovered.append(fallback.run_id)
+        return recovered
+
+    def record_observation(
+        self, run_id: str, action_id: str, projection: JsonObject
+    ) -> ObservationRecord:
+        """Projeção sanitizada do observe; sem commit, nenhum id é devolvido ao agente."""
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: knowledge.insert_observation(
+                conn, self.project_id, run_id, action_id, projection, timestamp
+            )
+        )
+
+    def get_observation(self, observation_id: str) -> ObservationRecord:
+        return self._database.read(lambda conn: knowledge.select_observation(conn, observation_id))
+
+    def propose_knowledge(
+        self, run_id: str, proposal: ProposalInput, raw: object = None
+    ) -> ProposalReceipt:
+        """Proposta e knowledge_proposed juntas; diretiva é recusada e auditada sem eco."""
+        if run_id in self._failed_closed:
+            raise HistoryUnavailableError()
+        timestamp = self._now()
+        try:
+            return self._database.write(
+                lambda conn: knowledge.propose(conn, self.project_id, run_id, proposal, timestamp)
+            )
+        except KnowledgeError as exc:
+            if exc.code == knowledge.POSSIBLE_INJECTION:
+                self.record_knowledge_rejection(run_id, exc.code, raw)
+            raise
+
+    def record_knowledge_rejection(self, run_id: str, code: str, raw: object) -> None:
+        timestamp = self._now()
+        self._database.write(
+            lambda conn: knowledge.record_rejection(conn, run_id, code, raw, timestamp)
+        )
+
+    def query_knowledge(self, run_id: str, request: QueryInput) -> QueryResult:
+        now = self._clock()
+        timestamp = db_timestamp(now)
+        return self._database.write(
+            lambda conn: knowledge.query(conn, self.project_id, run_id, request, now, timestamp)
+        )
+
+    def revalidate_knowledge(self, run_id: str, request: RevalidateInput) -> RevalidationResult:
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: knowledge.revalidate(conn, self.project_id, run_id, request, timestamp)
+        )
+
+    def list_knowledge(
+        self,
+        *,
+        flow: str | None = None,
+        state: ValidationState | None = None,
+        include_discarded: bool = False,
+    ) -> list[KnowledgeEntry]:
+        return self._database.read(
+            lambda conn: knowledge.list_entries(
+                conn,
+                self.project_id,
+                flow=flow,
+                state=state,
+                include_discarded=include_discarded,
+            )
+        )
+
+    def knowledge_detail(self, entry_id: str) -> KnowledgeDetail:
+        return self._database.read(lambda conn: knowledge.detail(conn, self.project_id, entry_id))
+
+    def _mutate(
+        self,
+        entry_id: str,
+        operation: MutationOperation,
+        expected_revision: int,
+        payload: JsonObject,
+        reason: str,
+    ) -> MutationResult:
+        if not reason.strip():
+            raise KnowledgeError(knowledge.INVALID_KNOWLEDGE, "A reason is required.")
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: knowledge.request_mutation(
+                conn,
+                self.project_id,
+                entry_id,
+                operation,
+                expected_revision,
+                payload,
+                redact_text(reason),
+                timestamp,
+            )
+        )
+
+    def edit_knowledge(
+        self, entry_id: str, document: EditDocument, expected_revision: int, reason: str
+    ) -> MutationResult:
+        payload: JsonObject = {"document": document.model_dump(mode="json")}
+        return self._mutate(entry_id, MutationOperation.EDIT, expected_revision, payload, reason)
+
+    def discard_knowledge(
+        self, entry_id: str, expected_revision: int, reason: str
+    ) -> MutationResult:
+        return self._mutate(entry_id, MutationOperation.DISCARD, expected_revision, {}, reason)
+
+    def attest_knowledge(
+        self,
+        entry_id: str,
+        expected_revision: int,
+        reason: str,
+        system_version: str | None = None,
+    ) -> MutationResult:
+        """Atestado humano: proveniência nova, nunca prova de observação automática."""
+        payload: JsonObject = {"system_version": system_version}
+        return self._mutate(
+            entry_id, MutationOperation.REVALIDATE, expected_revision, payload, reason
+        )
+
+    def consolidate_memory(self, run_id: str) -> MemoryOutcome:
+        """Retry idempotente da fila e de eventual fallback de uma run terminal."""
+        path = fallback_path(self._layout.run_dir(run_id))
+        if path.is_file():
+            try:
+                fallback = load_fallback(path, self.project_id)
+            except (FallbackError, OSError) as exc:
+                raise KnowledgeError(knowledge.INVALID_REFERENCE, str(exc)) from None
+            timestamp = self._now()
+            result = self._database.write(
+                lambda conn: knowledge.retry_consolidation(
+                    conn,
+                    self.project_id,
+                    run_id,
+                    fallback.attempt_key,
+                    timestamp,
+                    fallback=fallback.proposals,
+                )
+            )
+            with contextlib.suppress(OSError):
+                mark_imported(path)
+            return result
+        timestamp = self._now()
+        attempt_key = "retry:" + timestamp
+        return self._database.write(
+            lambda conn: knowledge.retry_consolidation(
+                conn, self.project_id, run_id, attempt_key, timestamp
+            )
+        )
+
+    def record_adapter_knowledge(
+        self,
+        *,
+        adapter: str,
+        source: SourceType,
+        source_ref: str,
+        flow: str,
+        category: Category,
+        fact: Fact,
+        scope: Scope,
+    ) -> KnowledgeEntry:
+        """Fronteira para adaptadores confiáveis de documentação, código e issues."""
+        timestamp = self._now()
+
+        def write(conn: sqlite3.Connection) -> KnowledgeEntry:
+            entry_id = knowledge.adapter_fact(
+                conn,
+                self.project_id,
+                adapter=adapter,
+                source=source,
+                source_ref=source_ref,
+                flow=flow,
+                category=category,
+                fact=fact,
+                scope=scope,
+                timestamp=timestamp,
+            )
+            return knowledge.select_entry(conn, self.project_id, entry_id)
+
+        return self._database.write(write)
+
+    def knowledge_extensions(self, entry_id: str) -> JsonObject:
+        return self._database.read(lambda conn: knowledge.entry_extensions(conn, entry_id))
+
+    def memory_outcome(self, run_id: str) -> MemoryOutcome | None:
+        return self._database.read(lambda conn: knowledge.select_outcome(conn, run_id))
+
+    def list_consolidation_attempts(self, run_id: str) -> list[ConsolidationAttempt]:
+        return self._database.read(lambda conn: knowledge.select_attempts(conn, run_id))
+
+    def fts5_available(self) -> bool:
+        return self._database.read(knowledge.fts5_available)
 
     def append_event(
         self,
@@ -862,6 +1130,7 @@ class HistoryStore:
                 oracle_signals=tuple(
                     sorted(select_signals(conn, run_id), key=lambda signal: signal.last_event_id)
                 ),
+                memory=knowledge.select_outcome(conn, run_id),
             )
 
         return self._database.read(read)
@@ -984,5 +1253,6 @@ def open_history(
         owner_pid=owner_pid,
     )
     store.reconcile_orphans()
+    store.recover_memory_fallbacks()
     store.expire_approvals()
     return store
