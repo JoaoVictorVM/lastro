@@ -49,6 +49,7 @@ async def serve(profile: str | None = None) -> None:
         if control is not None:
             await control.close()
         if runtime is not None:
+            runtime.approvals.close()
             await runtime.session.close()
 
 

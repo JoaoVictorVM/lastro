@@ -69,7 +69,8 @@ def test_pre_authorized_update_and_unconfirmed_origin(
             result = await runtime.call(
                 "fill", {"target": {"label": "E-mail"}, "value": "qa@example.com"}
             )
-            assert result["decision"] == "require_approval", result
+            assert result["decision"] == "awaiting_approval", result
+            assert history.get_run(run.record.id).status.value == "awaiting_approval"
         finally:
             await runtime.session.close()
 
