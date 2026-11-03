@@ -73,6 +73,7 @@ class EventType(StrEnum):
     KNOWLEDGE_PROPOSED = "knowledge_proposed"
     LIMIT_HIT = "limit_hit"
     RUN_ENDED = "run_ended"
+    NOTIFICATION_DEGRADED = "notification_degraded"
 
 
 # Somente o registro abre e fecha a run; consumidores não anexam esses dois tipos.
@@ -616,3 +617,93 @@ class ReportInputs:
     clarifications: tuple[Clarification, ...]
     created_records: tuple[CreatedRecord, ...]
     oracle_signals: tuple[OracleSignal, ...]
+
+
+APPROVAL_TTL_SECONDS = 900
+MAX_APPROVAL_NOTE_LENGTH = 2000
+NO_RESPONSE_REASON = "no_response"
+
+
+class ApprovalStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    SKIPPED = "skipped"
+    ENDED = "ended"
+    EXPIRED = "expired"
+    INVALIDATED = "invalidated"
+    CONSUMED = "consumed"
+    EXECUTION_FAILED = "execution_failed"
+
+
+class ApprovalChoice(StrEnum):
+    APPROVE = "approve"
+    SKIP = "skip"
+    END_RUN = "end_run"
+
+
+class DecidedBy(StrEnum):
+    CLI = "cli"
+    EXECUTOR_PROMPT = "executor_prompt"
+    SYSTEM = "system"
+    # Reservado ao approver automatizado da avaliação; passa pela mesma fachada e pelo mesmo
+    # fingerprint que as decisões humanas.
+    SCRIPTED = "scripted"
+
+
+class NotificationChannel(StrEnum):
+    EXECUTOR_HOOK = "executor_hook"
+    DESKTOP = "desktop"
+    TAIL = "tail"
+
+
+class NotificationStatus(StrEnum):
+    DELIVERED = "delivered"
+    DEGRADED = "degraded"
+    UNSUPPORTED = "unsupported"
+
+
+@dataclass(frozen=True)
+class ApprovalRecord:
+    """Pedido de aprovação; `action_id` é o id público usado em `lastro approve`."""
+
+    id: str
+    run_id: str
+    action_id: str
+    fingerprint: str
+    status: ApprovalStatus
+    decision: ApprovalChoice | None
+    decided_by: DecidedBy | None
+    decision_reason: str | None
+    payload: JsonObject
+    requested_at: str
+    expires_at: str
+    decided_at: str | None
+    invalidated_at: str | None
+    consumed_at: str | None
+    execution_correlation_id: str | None
+
+    @property
+    def summary(self) -> str:
+        value = self.payload.get("summary")
+        return value if isinstance(value, str) else self.action_id
+
+
+@dataclass(frozen=True)
+class ApprovalDecision:
+    """Interface de decisão consumida pelo harness de avaliação."""
+
+    action_id: str
+    decision: ApprovalChoice
+    decided_by: DecidedBy
+    timestamp: str
+
+
+@dataclass(frozen=True)
+class NotificationAttempt:
+    approval_id: str
+    channel: NotificationChannel
+    status: NotificationStatus
+    requested_at: str
+    completed_at: str | None
+    latency_ms: int | None
+    error_code: str | None

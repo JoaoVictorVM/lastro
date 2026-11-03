@@ -58,6 +58,7 @@ def test_event_and_value_enums_are_stable() -> None:
         "knowledge_proposed",
         "limit_hit",
         "run_ended",
+        "notification_degraded",
     ]
     assert {decision.value for decision in PolicyDecision} == {
         "allow",
@@ -136,9 +137,9 @@ VALID_ROWS = {
         (RUN_ID, NOW, NOW),
     ),
     "approvals": (
-        "INSERT INTO approvals (id, run_id, action_fingerprint, requested_at) "
-        "VALUES ('a1', ?, ?, ?)",
-        (RUN_ID, HASH, NOW),
+        "INSERT INTO approvals (id, run_id, action_id, action_fingerprint, status, "
+        "requested_at, expires_at) VALUES ('a1', ?, 'act1', ?, 'pending', ?, ?)",
+        (RUN_ID, HASH, NOW, NOW),
     ),
     "created_records": (
         "INSERT INTO created_records (id, run_id, entity_type, system_identifier, tenant, "
@@ -178,14 +179,14 @@ INVALID_ROWS = [
         (RUN_ID, NOW, NOW),
     ),
     (
-        "INSERT INTO approvals (id, run_id, action_fingerprint, requested_at) "
-        "VALUES ('a2', ?, 'curto', ?)",
-        (RUN_ID, NOW),
+        "INSERT INTO approvals (id, run_id, action_id, action_fingerprint, status, "
+        "requested_at, expires_at) VALUES ('a2', ?, 'act2', 'curto', 'pending', ?, ?)",
+        (RUN_ID, NOW, NOW),
     ),
     (
-        "INSERT INTO approvals (id, run_id, action_fingerprint, decision, requested_at) "
-        "VALUES ('a3', ?, ?, 'approve', ?)",
-        (RUN_ID, HASH, NOW),
+        "INSERT INTO approvals (id, run_id, action_id, action_fingerprint, status, decision, "
+        "requested_at, expires_at) VALUES ('a3', ?, 'act3', ?, 'pending', 'approve', ?, ?)",
+        (RUN_ID, HASH, NOW, NOW),
     ),
     (
         "INSERT INTO created_records (id, run_id, entity_type, system_identifier, tenant, "
@@ -233,7 +234,9 @@ def test_reserved_tables_accept_minimum_payload_and_reject_invalid_contracts(
         payload = conn.execute(f"SELECT payload_json FROM {table}").fetchone()[0]
         assert payload == "{}", table
     conn.execute(
-        "UPDATE approvals SET decision = 'approve', decided_at = ? WHERE id = 'a1'", (NOW,)
+        "UPDATE approvals SET status = 'approved', decision = 'approve', decided_by = 'cli', "
+        "decided_at = ? WHERE id = 'a1'",
+        (NOW,),
     )
     conn.execute(
         "UPDATE created_records SET cleanup_status = 'cleaned_manually', cleaned_at = ? "

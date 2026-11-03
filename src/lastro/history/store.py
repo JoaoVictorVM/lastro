@@ -14,6 +14,7 @@ from pathlib import Path
 
 from lastro import get_version
 from lastro.config.loader import LoadedConfig, ProjectContext
+from lastro.history import approvals
 from lastro.history.artifacts import (
     StoredFile,
     insert_artifact,
@@ -31,6 +32,7 @@ from lastro.history.created_records import (
 from lastro.history.database import Database, RetryPolicy, db_timestamp
 from lastro.history.errors import (
     ActiveRunExistsError,
+    ApprovalError,
     DiskFullError,
     HistoryError,
     HistoryUnavailableError,
@@ -65,6 +67,10 @@ from lastro.history.models import (
     LIFECYCLE_EVENTS,
     PROCESS_LOST_REASON,
     ActionReference,
+    ApprovalChoice,
+    ApprovalDecision,
+    ApprovalRecord,
+    ApprovalStatus,
     ArtifactRecord,
     ArtifactType,
     Clarification,
@@ -76,6 +82,7 @@ from lastro.history.models import (
     CriterionResult,
     CriterionResultDraft,
     CriterionSubmission,
+    DecidedBy,
     EventRecord,
     EventType,
     ExecutorInfo,
@@ -89,6 +96,9 @@ from lastro.history.models import (
     MissionContext,
     MissionPlan,
     MissionSource,
+    NotificationAttempt,
+    NotificationChannel,
+    NotificationStatus,
     PlanStatus,
     PlanSubmission,
     PolicyDecision,
@@ -572,6 +582,136 @@ class HistoryStore:
     def list_clarifications(self, run_id: str) -> list[Clarification]:
         return self._database.read(lambda conn: select_clarifications(conn, run_id))
 
+    def request_approval(
+        self, run_id: str, action_id: str, fingerprint: str, payload: JsonObject
+    ) -> ApprovalRecord:
+        """Pedido durável antes de qualquer efeito; a run passa a awaiting_approval."""
+        now = self._clock()
+        return self._database.write(
+            lambda conn: approvals.create_request(
+                conn, run_id, action_id, fingerprint, payload, now
+            )
+        )
+
+    def decide_approval(
+        self,
+        action_id: str,
+        choice: ApprovalChoice | str,
+        decided_by: DecidedBy | str,
+        *,
+        note: str | None = None,
+        run_id: str | None = None,
+        proof_nonce_sha256: str | None = None,
+    ) -> ApprovalRecord:
+        """Decisão humana ou do approver roteirizado; nunca executa a ação armazenada."""
+        now = self._clock()
+        record = self._database.write(
+            lambda conn: approvals.decide(
+                conn,
+                action_id,
+                ApprovalChoice(choice),
+                DecidedBy(decided_by),
+                now,
+                note=note,
+                run_id=run_id,
+                proof_nonce_sha256=proof_nonce_sha256,
+            )
+        )
+        if record.status == ApprovalStatus.ENDED:
+            clear_active_pointer(self._layout.active_run, record.run_id)
+        return record
+
+    def consume_approval(
+        self, run_id: str, action_id: str, fingerprint: str, correlation_id: str
+    ) -> ApprovalRecord:
+        now = self._clock()
+        return self._database.write(
+            lambda conn: approvals.consume(
+                conn, run_id, action_id, fingerprint, correlation_id, now
+            )
+        )
+
+    def invalidate_approval(
+        self, run_id: str, action_id: str, changed_field: str
+    ) -> ApprovalRecord:
+        now = self._clock()
+
+        def run(conn: sqlite3.Connection) -> ApprovalRecord:
+            record = approvals.select_approval(conn, action_id, run_id)
+            if record is None:
+                raise ApprovalError(approvals.APPROVAL_NOT_FOUND, f"Unknown approval {action_id}.")
+            return approvals.invalidate(conn, record, changed_field, now)
+
+        return self._database.write(run)
+
+    def fail_approval_execution(
+        self, run_id: str, action_id: str, error_code: str
+    ) -> ApprovalRecord:
+        now = self._clock()
+        return self._database.write(
+            lambda conn: approvals.mark_execution_failed(conn, run_id, action_id, error_code, now)
+        )
+
+    def expire_approvals(self, run_id: str | None = None) -> list[ApprovalRecord]:
+        """Reconciliação de pedidos vencidos, chamada no startup, em leituras e pelo timer."""
+        now = self._clock()
+        expired = self._database.write(lambda conn: approvals.expire_due(conn, now, run_id))
+        return expired
+
+    def get_approval(self, action_id: str, run_id: str | None = None) -> ApprovalRecord | None:
+        return self._database.read(lambda conn: approvals.select_approval(conn, action_id, run_id))
+
+    def pending_approval(self, run_id: str) -> ApprovalRecord | None:
+        return self._database.read(lambda conn: approvals.select_pending(conn, run_id))
+
+    def list_approvals(self, run_id: str) -> list[ApprovalRecord]:
+        return self._database.read(lambda conn: approvals.select_approvals(conn, run_id))
+
+    def approval_decision(
+        self, action_id: str, run_id: str | None = None
+    ) -> ApprovalDecision | None:
+        """Decisão registrada de um pedido, como o harness de avaliação a consome."""
+        record = self.get_approval(action_id, run_id)
+        if (
+            record is None
+            or record.decision is None
+            or record.decided_by is None
+            or record.decided_at is None
+        ):
+            return None
+        return ApprovalDecision(
+            record.action_id, record.decision, record.decided_by, record.decided_at
+        )
+
+    def record_notification(
+        self,
+        record: ApprovalRecord,
+        channel: NotificationChannel | str,
+        status: NotificationStatus | str,
+        *,
+        requested_at: datetime,
+        latency_ms: int,
+        error_code: str | None = None,
+        attempt_key: str = "initial",
+    ) -> NotificationAttempt:
+        completed = self._now()
+        return self._database.write(
+            lambda conn: approvals.record_notification(
+                conn,
+                record,
+                NotificationChannel(channel),
+                NotificationStatus(status),
+                db_timestamp(requested_at),
+                completed,
+                latency_ms,
+                error_code,
+                attempt_key,
+            )
+        )
+
+    def list_notifications(self, record: ApprovalRecord) -> list[NotificationAttempt]:
+        return self._database.read(lambda conn: approvals.select_notifications(conn, record))
+
     def validate_heuristic_check(
         self, run_id: str, check: HeuristicCheckInput
     ) -> tuple[ActionReference, ...]:
@@ -844,4 +984,5 @@ def open_history(
         owner_pid=owner_pid,
     )
     store.reconcile_orphans()
+    store.expire_approvals()
     return store
