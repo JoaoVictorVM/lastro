@@ -42,6 +42,8 @@ async def serve(profile: str | None = None) -> None:
     control = HumanControl(runtime) if runtime is not None else None
     if control is not None:
         await control.start()
+        assert runtime is not None
+        runtime.proofs = control.accept_proof
     try:
         async with stdio_server() as (read, write):
             await server.run(read, write, server.create_initialization_options())
