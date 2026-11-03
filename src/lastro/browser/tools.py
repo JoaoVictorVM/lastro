@@ -790,6 +790,12 @@ class BrowserTools:
         self.history.seal_criterion_results(self.run_id)
         self.history.finish_run(self.run_id, RunStatus(args.outcome), args.reason)
         result: dict[str, Any] = {"status": args.outcome}
+        memory = self.history.memory_outcome(self.run_id)
+        if memory is not None:
+            result.update(
+                memory_outcome=memory.outcome.value,
+                memory_pending=memory.pending_count,
+            )
         # O relatório fica fora da transação terminal: falhar aqui nunca reabre nem muda a run.
         try:
             report = ReportBuilder(self.history).build_final(self.run_id)

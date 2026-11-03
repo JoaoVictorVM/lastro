@@ -195,6 +195,7 @@ class KnowledgeHarness:
     context: Callable[[str], ProjectContext]
     clock: Callable[[], Any] | None = None
     process_checker: Callable[[int], bool] | None = None
+    owner_pid: int | None = None
 
     def history(self, profile: str = "homolog") -> Any:
         from lastro.history import open_history
@@ -204,6 +205,8 @@ class KnowledgeHarness:
             kwargs["clock"] = self.clock
         if self.process_checker is not None:
             kwargs["process_checker"] = self.process_checker
+        if self.owner_pid is not None:
+            kwargs["owner_pid"] = self.owner_pid
         return open_history(self.context(profile), **kwargs)
 
     def start(self, profile: str = "homolog", version: str | None = "v1") -> tuple[Any, str]:
