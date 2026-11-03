@@ -186,3 +186,97 @@ def with_browser(chromium: None) -> Callable[[BrowserScenario[Any]], Any]:
         return asyncio.run(main())
 
     return execute
+
+
+@dataclass
+class KnowledgeHarness:
+    """Runs e observações reais no histórico, sem browser, para os testes da memória."""
+
+    context: Callable[[str], ProjectContext]
+    clock: Callable[[], Any] | None = None
+    process_checker: Callable[[int], bool] | None = None
+
+    def history(self, profile: str = "homolog") -> Any:
+        from lastro.history import open_history
+
+        kwargs: dict[str, Any] = {}
+        if self.clock is not None:
+            kwargs["clock"] = self.clock
+        if self.process_checker is not None:
+            kwargs["process_checker"] = self.process_checker
+        return open_history(self.context(profile), **kwargs)
+
+    def start(self, profile: str = "homolog", version: str | None = "v1") -> tuple[Any, str]:
+        from lastro.history import TextMission
+
+        history = self.history(profile)
+        run = history.create_run(
+            self.context(profile), TextMission("Explore employees"), executed_system_version=version
+        )
+        return history, run.record.id
+
+    def observe(
+        self,
+        history: Any,
+        run_id: str,
+        route: str = "/employees/new",
+        *,
+        fields: list[dict[str, Any]] | None = None,
+        landmarks: list[dict[str, Any]] | None = None,
+        incomplete: bool = False,
+    ) -> str:
+        import uuid
+
+        from lastro.history import EventType
+
+        action_id = uuid.uuid4().hex
+        history.append_event(
+            run_id, EventType.TOOL_CALL, tool_name="observe", correlation_id=action_id
+        )
+        projection: dict[str, Any] = {
+            "route": route,
+            "title": "Novo funcionário",
+            "landmarks": landmarks
+            if landmarks is not None
+            else [{"role": "heading", "label": "Novo funcionário"}],
+            "fields": fields
+            if fields is not None
+            else [{"name": "cpf", "label": "CPF", "required": True, "visible": True}],
+            "incomplete": incomplete,
+        }
+        return history.record_observation(run_id, action_id, projection).id
+
+    def propose(
+        self,
+        history: Any,
+        run_id: str,
+        observation_id: str,
+        *,
+        value: Any = True,
+        attribute: str = "required",
+        key: str | None = None,
+        flow: str = "employee",
+    ) -> Any:
+        from lastro.knowledge import ProposalInput
+
+        proposal = ProposalInput.model_validate(
+            {
+                "flow": flow,
+                "category": "screen_component",
+                "fact": {
+                    "type": "field_property",
+                    "subject": "employee",
+                    "field": "cpf",
+                    "attribute": attribute,
+                    "value": value,
+                },
+                "observation_ids": [observation_id],
+                "idempotency_key": key or f"{attribute}-{value}-{observation_id}",
+            }
+        )
+        return history.propose_knowledge(run_id, proposal)
+
+
+@pytest.fixture
+def knowledge(history_context_for: Callable[[str], ProjectContext]) -> KnowledgeHarness:
+    return KnowledgeHarness(history_context_for)
