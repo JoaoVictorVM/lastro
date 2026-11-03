@@ -10,6 +10,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from lastro.approvals.models import (
@@ -49,6 +50,17 @@ GUIDANCE = {
 
 class Notifier(Protocol):
     async def notify(self, record: ApprovalRecord) -> object: ...
+
+
+class PromptAdapter(Protocol):
+    """Prompt nativo de um executor: devolve o pedido completo e a prova, ou None.
+
+    None degrada para a CLI e o tail; um adapter nunca grava a decisão por conta própria.
+    """
+
+    name: str
+
+    def prompt(self, tool_input: dict[str, Any], cwd: Path) -> tuple[str, str] | None: ...
 
 
 @dataclass(frozen=True)

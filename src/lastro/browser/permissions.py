@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+from lastro.approvals.gate import PromptAdapter
 from lastro.browser.tools import EFFECT_TOOLS, TOOLS
 
 PREFIX = "mcp__lastro__"
@@ -63,7 +64,16 @@ def approval_prompt(tool_input: dict[str, Any], cwd: Path) -> tuple[str, str] | 
     return "\n".join(request_lines(pending, f"{expires} ({loaded.config.timezone})")), token
 
 
-def pre_tool_use(data: dict[str, Any]) -> dict[str, object]:
+class ClaudePromptAdapter:
+    """Adapter do Claude Code: `ask` com o pedido e input atualizado com a prova."""
+
+    name = "claude-code"
+
+    def prompt(self, tool_input: dict[str, Any], cwd: Path) -> tuple[str, str] | None:
+        return approval_prompt(tool_input, cwd)
+
+
+def pre_tool_use(data: dict[str, Any], adapter: PromptAdapter | None = None) -> dict[str, object]:
     name = data.get("tool_name", "")
     if not isinstance(name, str) or name not in CATALOG:
         return decision("")
@@ -76,7 +86,9 @@ def pre_tool_use(data: dict[str, Any]) -> dict[str, object]:
     if tool in EFFECT_TOOLS and "approval_id" in tool_input:
         cwd = data.get("cwd")
         try:
-            prompt = approval_prompt(tool_input, Path(cwd) if isinstance(cwd, str) else Path.cwd())
+            prompt = (adapter or ClaudePromptAdapter()).prompt(
+                tool_input, Path(cwd) if isinstance(cwd, str) else Path.cwd()
+            )
         except Exception:
             prompt = None
         if prompt is not None:

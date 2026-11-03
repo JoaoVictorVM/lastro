@@ -277,3 +277,141 @@ def test_end_from_gate_cancels_locks_and_closes_browser(
         assert writes(demo_server, href) == []
 
     run_scenario(demo_project(make_auth_project), scenario)
+
+
+UPDATE_POLICY = """
+[profiles.demo.policy]
+version = 1
+
+[[profiles.demo.policy.bindings]]
+id = "employee-update"
+entity = "employee"
+operation = "update"
+route = "/employees/{id}/edit"
+target = {role = "button", name = "Salvar"}
+form = "employee-form"
+field_values = {status = ["active"]}
+
+[profiles.demo.policy.bindings.fields]
+full_name = "full_name"
+cpf = "cpf"
+email = "email"
+phone = "phone"
+role = "role"
+hire_date = "hire_date"
+status = "status"
+
+[profiles.demo.policy.bindings.request]
+method = "POST"
+path = "/employees/{id}"
+success_status = 200
+"""
+
+
+def test_approval_flow_over_stdio_with_cli_in_another_process(
+    make_auth_project: Callable[..., Any], profile_for: Callable[..., str], demo_server: Any
+) -> None:
+    import json
+    import os
+    import subprocess
+    import sys
+
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    from mcp.types import TextContent
+
+    profile = profile_for("demo", demo_server.url).replace(
+        'allowed_entities = ["employee"]',
+        'allowed_entities = ["employee"]\neditable_fields = { employee = '
+        '["full_name", "cpf", "email", "phone", "role", "hire_date", "status"] }',
+    )
+    project = make_auth_project(profile + UPDATE_POLICY)
+    context = project.context()
+    history = open_history(context)
+    run_id = history.create_run(context, TextMission("Editar telefone com aprovação")).record.id
+    base = context.profile.target_url
+    env = {**os.environ, "LASTRO_DESKTOP_NOTIFICATIONS": "off", "PYTHONIOENCODING": "utf-8"}
+
+    def approve(action_id: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-m", "lastro", "approve", action_id],
+            cwd=project.config_path.parent,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=False,
+        )
+
+    async def scenario() -> None:
+        parameters = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "lastro.browser.server", "--profile", "demo"],
+            cwd=str(project.config_path.parent),
+            env=env,
+        )
+        async with stdio_client(parameters) as (read, write), ClientSession(read, write) as client:
+            await client.initialize()
+            names = [item.name for item in (await client.list_tools()).tools]
+            assert "approval_status" in names
+
+            async def tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+                result = await client.call_tool(name, arguments)
+                content = result.content[0]
+                assert isinstance(content, TextContent)
+                return json.loads(content.text)
+
+            assert "error" not in await tool("navigate", {"url": base + "/employees/1/edit"})
+            phone = {"target": {"label": "Telefone"}, "value": "(11) 90000-0000"}
+            first = await tool("fill", phone)
+            assert first["decision"] == "awaiting_approval", first
+            decided = await asyncio.to_thread(approve, first["approval_id"])
+            assert decided.returncode == 0, decided.stderr
+            assert "approved by user at" in decided.stdout
+            status = await tool("approval_status", {"approval_id": first["approval_id"]})
+            assert status["status"] == "approved"
+            filled = await tool("fill", {**phone, "approval_id": first["approval_id"]})
+            assert filled["approval_status"] == "consumed", filled
+
+            save = {"target": {"role": "button", "name": "Salvar"}}
+            pending = await tool("submit", save)
+            assert pending["decision"] == "awaiting_approval", pending
+            assert pending["summary"] == "edit employee #1 (phone) in Clínica Aurora"
+            assert not [p for m, p in demo_server.access_log if m == "POST" and p == "/employees/1"]
+            assert (await asyncio.to_thread(approve, pending["approval_id"])).returncode == 0
+            saved = await tool("submit", {**save, "approval_id": pending["approval_id"]})
+            assert saved["status"] == "ok", saved
+            ended = await tool("end_run", {"outcome": "completed", "reason": "done"})
+            assert ended["status"] == "completed"
+
+    asyncio.run(scenario())
+    posts = [p for m, p in demo_server.access_log if m == "POST" and p == "/employees/1"]
+    assert posts == ["/employees/1"]
+    statuses = [item.status for item in history.list_approvals(run_id)]
+    assert statuses == [ApprovalStatus.CONSUMED, ApprovalStatus.CONSUMED]
+
+
+def test_failure_after_consumption_is_never_replayed(
+    make_auth_project: Callable[..., Any], demo_server: Any, monkeypatch: Any
+) -> None:
+    async def scenario(runtime: BrowserTools, history: HistoryStore, run_id: str, href: str):
+        first = await runtime.call("fill", EMAIL)
+        history.decide_approval(first["approval_id"], "approve", "cli")
+
+        def crash(*_: object) -> None:
+            raise RuntimeError("Target page, context or browser has been closed")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(runtime.session, "mark_action", crash)
+            failed = await runtime.call("fill", {**EMAIL, "approval_id": first["approval_id"]})
+        again = await runtime.call("fill", {**EMAIL, "approval_id": first["approval_id"]})
+
+        assert "error" in failed
+        record = history.get_approval(first["approval_id"], run_id)
+        assert record is not None and record.status == ApprovalStatus.EXECUTION_FAILED
+        assert (again["decision"], again["approval_status"]) == ("not_executed", "execution_failed")
+        page = cast(Page, runtime.session.page)
+        assert await page.get_by_label("E-mail", exact=True).input_value() != "qa@example.com"
+
+    run_scenario(demo_project(make_auth_project), scenario)

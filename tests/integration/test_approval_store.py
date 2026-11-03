@@ -300,3 +300,28 @@ def test_v006_upgrades_v005_database_and_preserves_events(tmp_path: Path) -> Non
             )
     finally:
         conn.close()
+
+
+def test_scripted_approver_uses_same_interface_without_fingerprint_bypass(
+    history_context: ProjectContext, fake_clock: Callable[[], datetime]
+) -> None:
+    history, run_id = started(history_context, fake_clock)
+    history.request_approval(run_id, "act1", FINGERPRINT, payload())
+
+    history.decide_approval("act1", ApprovalChoice.APPROVE, DecidedBy.SCRIPTED)
+
+    decision = history.approval_decision("act1", run_id)
+    assert decision is not None
+    assert (decision.action_id, decision.decision, decision.decided_by) == (
+        "act1",
+        ApprovalChoice.APPROVE,
+        DecidedBy.SCRIPTED,
+    )
+    assert decision.timestamp
+    with pytest.raises(ApprovalError) as changed:
+        history.consume_approval(run_id, "act1", OTHER, "retry")
+    assert changed.value.code == "fingerprint_changed"
+    assert history.consume_approval(run_id, "act1", FINGERPRINT, "retry").status == (
+        ApprovalStatus.CONSUMED
+    )
+    assert history.approval_decision("unknown") is None

@@ -39,6 +39,11 @@ list the intended scope and contain no shipped changes until their release date 
   `record_criterion_result` that requires positive evidence for `met`, on-demand WebM evidence
   of up to 60 seconds, a Markdown report built only from the history at the end of each run,
   bug drafts per confirmed finding, `lastro report verify` and `lastro report export --public`.
+- Human approval gates: writes that need approval are recorded before any effect, decided
+  outside the model with `lastro approve <id> [--skip|--end]` or the Claude Code permission
+  prompt, executed exactly once only when the recomputed fingerprint matches, skipped after
+  15 minutes without response, and announced by a desktop notification with an audited
+  fallback to the `lastro tail` banner and bell.
 
 ## [1.0.0] - Planned
 
@@ -91,6 +96,6 @@ v0.1.0 is released.
 - Enforce explicit write bindings, record provenance, tenant checks and network guards.
 - Add pinned HTTPS auxiliary transport, authenticated local tenant recovery and
   restrictive executor configuration with a Lastro-only tool hook.
-- Keep approval execution, clarification and executor-driven mission orchestration
+- Keep clarification and executor-driven mission orchestration
   unavailable until their respective integrations are installed. Agent prompt-injection
   behavior and actual executor permission denials remain separate acceptance checks.
