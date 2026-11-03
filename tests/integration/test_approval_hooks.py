@@ -184,3 +184,22 @@ def test_scaffold_updates_published_settings_and_diagnoses_local_edits(tmp_path:
     kept = write_scaffold(custom, answers)
     assert (custom / ".claude" / "settings.json").read_text(encoding="utf-8") == '{"hooks": {}}'
     assert any("PreToolUse, Notification" in line for line in kept.diagnostics)
+
+
+def test_permission_prompt_notification_is_recorded(
+    history_context: ProjectContext, workdir: Path, monkeypatch: Any
+) -> None:
+    monkeypatch.setenv("LASTRO_DESKTOP_NOTIFICATIONS", "off")
+    history = open_history(history_context)
+    run_id = history.create_run(history_context, TextMission("Editar")).record.id
+    assert handle({"hook_event_name": "Notification", "cwd": str(workdir)}) == {}
+    record = history.request_approval(run_id, "act57", FINGERPRINT, payload(run_id))
+
+    assert handle({"hook_event_name": "Notification", "cwd": str(workdir)}) == {}
+
+    (attempt,) = history.list_notifications(record)
+    assert (attempt.channel.value, attempt.status.value, attempt.error_code) == (
+        "executor_hook",
+        "unsupported",
+        "desktop_disabled",
+    )

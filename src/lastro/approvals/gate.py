@@ -48,7 +48,7 @@ GUIDANCE = {
 
 
 class Notifier(Protocol):
-    async def notify(self, record: ApprovalRecord) -> None: ...
+    async def notify(self, record: ApprovalRecord) -> object: ...
 
 
 @dataclass(frozen=True)

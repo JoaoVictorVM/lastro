@@ -1,10 +1,16 @@
 import asyncio
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from playwright.async_api import Page
 
+from lastro.approvals.notifications import (
+    NotificationAdapter,
+    NotificationMessage,
+    NotificationRouter,
+    SendResult,
+)
 from lastro.browser.demo import FIELDS, demo_policy
 from lastro.browser.tools import BrowserTools
 from lastro.config.loader import ProjectContext
@@ -12,6 +18,8 @@ from lastro.history import (
     ApprovalStatus,
     EventType,
     HistoryStore,
+    NotificationChannel,
+    NotificationStatus,
     RunStatus,
     TextMission,
     open_history,
@@ -28,11 +36,15 @@ def demo_project(make_auth_project: Callable[..., Any]) -> ProjectContext:
 
 
 def run_scenario(
-    project: ProjectContext, scenario: Scenario, clock: Callable[[], datetime] | None = None
+    project: ProjectContext,
+    scenario: Scenario,
+    clock: Callable[[], datetime] | None = None,
+    adapters: Sequence[NotificationAdapter] = (),
 ) -> None:
     history = open_history(project, clock=clock) if clock is not None else open_history(project)
     run_id = history.create_run(project, TextMission("Edit employee with approval")).record.id
-    runtime = BrowserTools(project, history, run_id)
+    notifier = NotificationRouter(history, adapters) if adapters else None
+    runtime = BrowserTools(project, history, run_id, notifier=notifier)
 
     async def main() -> None:
         try:
@@ -198,6 +210,70 @@ def test_agent_end_run_while_waiting_skips_pending_request(
         record = history.get_approval(first["approval_id"], run_id)
         assert record is not None
         assert (record.status, record.decided_by) == (ApprovalStatus.SKIPPED, "system")
+        assert writes(demo_server, href) == []
+
+    run_scenario(demo_project(make_auth_project), scenario)
+
+
+class Unavailable:
+    channel = NotificationChannel.DESKTOP
+
+    def __init__(self) -> None:
+        self.messages: list[NotificationMessage] = []
+
+    async def send(self, message: NotificationMessage) -> SendResult:
+        self.messages.append(message)
+        return SendResult(NotificationStatus.UNSUPPORTED, "notifier_not_found")
+
+
+def test_request_notifies_or_records_degraded_fallback(
+    make_auth_project: Callable[..., Any], demo_server: Any
+) -> None:
+    desktop = Unavailable()
+
+    async def scenario(runtime: BrowserTools, history: HistoryStore, run_id: str, href: str):
+        first = await runtime.call("fill", EMAIL)
+
+        (message,) = desktop.messages
+        assert message.title == "Lastro needs approval"
+        assert message.body == first["summary"]
+        assert message.command == first["command"]
+        assert "qa@example.com" not in message.text
+        degraded = [
+            event.payload
+            for event in history.list_events(run_id)
+            if event.event_type == EventType.NOTIFICATION_DEGRADED
+        ]
+        assert len(degraded) == 1
+        record = history.get_approval(first["approval_id"], run_id)
+        assert record is not None and record.status == ApprovalStatus.PENDING
+        (attempt,) = history.list_notifications(record)
+        assert attempt.latency_ms is not None and attempt.latency_ms < 5000
+
+    run_scenario(demo_project(make_auth_project), scenario, adapters=[desktop])
+
+
+def test_end_from_gate_cancels_locks_and_closes_browser(
+    make_auth_project: Callable[..., Any], demo_server: Any, runner: Any
+) -> None:
+    from lastro.cli.app import app
+
+    async def scenario(runtime: BrowserTools, history: HistoryStore, run_id: str, href: str):
+        first = await runtime.call("fill", EMAIL)
+
+        ended = runner.invoke(app, ["approve", first["approval_id"], "--end"])
+
+        assert ended.exit_code == 0, ended.output
+        status = await runtime.call(
+            "approval_status", {"approval_id": first["approval_id"], "wait_seconds": 0}
+        )
+        assert (status["status"], status["decided_by"]) == ("ended", "cli")
+        assert "run_ended" in runtime.session.policy.locks
+        assert runtime.session.page is None
+        retry = await runtime.call("submit", SAVE)
+        assert retry == {"error": "No active run. Start one with 'lastro run start'."}
+        assert history.get_run(run_id).status == RunStatus.CANCELLED
+        assert [item.kind.value for item in history.list_report_snapshots(run_id)] == ["partial"]
         assert writes(demo_server, href) == []
 
     run_scenario(demo_project(make_auth_project), scenario)

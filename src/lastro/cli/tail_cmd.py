@@ -1,15 +1,23 @@
 """Comando lastro tail: acompanha os eventos de uma run por cursor de sequência."""
 
 import re
+import sys
 import time
 from collections.abc import Callable
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 
 from lastro.cli import output
 from lastro.cli.state import HISTORY_ERROR_EXIT_CODE, get_state
-from lastro.history import EventRecord, EventType, HistoryError, PolicyDecision
+from lastro.history import (
+    ApprovalStatus,
+    EventRecord,
+    EventType,
+    HistoryError,
+    HistoryStore,
+    PolicyDecision,
+)
 from lastro.history.redaction import canonical_json, preview, redact_text
 from lastro.timeutil import to_display_zone
 
@@ -22,8 +30,72 @@ DECISION_COLORS = {
     PolicyDecision.DENY: typer.colors.RED,
 }
 
+BANNER = "==== APPROVAL REQUIRED ===="
+BELL = "\a"
+DECIDERS = {
+    "cli": "user",
+    "executor_prompt": "user",
+    "scripted": "scripted approver",
+    "system": "system",
+}
+
 # Espera entre consultas, substituível nos testes.
 sleep: Callable[[float], None] = time.sleep
+
+
+def is_tty() -> bool:
+    return sys.stdout.isatty()
+
+
+def _field(payload: object, key: str) -> str:
+    value: object = cast(dict[str, object], payload).get(key) if isinstance(payload, dict) else None
+    return terminal_text(value) if value is not None else ""
+
+
+def approval_banner(event: EventRecord, timezone: str) -> list[str]:
+    """Pedido redigido em destaque: resumo, comando de decisão e expiração."""
+    payload = event.payload
+    expires = _field(payload, "expires_at")
+    until = f" (expires {to_display_zone(expires, timezone):%H:%M})" if expires else ""
+    return [
+        typer.style(BANNER, fg=typer.colors.YELLOW, bold=True),
+        "  " + _field(payload, "summary"),
+        f"  Decide: {_field(payload, 'command')} [--skip | --end]{until}",
+    ]
+
+
+def approval_outcome(event: EventRecord, timezone: str) -> str:
+    payload = event.payload
+    status = _field(payload, "status")
+    moment = to_display_zone(event.timestamp, timezone).strftime("%H:%M")
+    who = DECIDERS.get(_field(payload, "decided_by"), "user")
+    action = _field(payload, "action_id")
+    texts = {
+        ApprovalStatus.APPROVED.value: f"approved by {who} at {moment}",
+        ApprovalStatus.SKIPPED.value: f"skipped by {who} at {moment}",
+        ApprovalStatus.EXPIRED.value: f"skipped (no response) at {moment}",
+        ApprovalStatus.ENDED.value: f"run ended by {who} at {moment}",
+        ApprovalStatus.INVALIDATED.value: (
+            f"approval invalidated at {moment}: {_field(payload, 'changed_field')} changed"
+        ),
+        ApprovalStatus.CONSUMED.value: f"approved action executed once at {moment}",
+        ApprovalStatus.EXECUTION_FAILED.value: (
+            f"approved action failed at {moment} ({_field(payload, 'error_code')}); verify manually"
+        ),
+    }
+    return f"{texts.get(status, status)} ({action})"
+
+
+def degraded_line(event: EventRecord) -> str:
+    channel = _field(event.payload, "channel")
+    code = _field(event.payload, "error_code")
+    return f"notification degraded ({channel}: {code}); watch this tail for approvals"
+
+
+def still_pending(store: HistoryStore, event: EventRecord) -> bool:
+    action_id = _field(event.payload, "action_id")
+    record = store.get_approval(action_id, event.run_id) if action_id else None
+    return record is not None and record.status == ApprovalStatus.PENDING
 
 
 def terminal_text(value: object) -> str:
@@ -68,6 +140,12 @@ def describe(event: EventRecord) -> str:
 
 def format_event(event: EventRecord, timezone: str) -> str:
     moment = to_display_zone(event.timestamp, timezone).strftime("%H:%M:%S")
+    if event.event_type == EventType.APPROVAL_REQUESTED:
+        return "\n".join(f"{moment}  {line}" for line in approval_banner(event, timezone))
+    if event.event_type == EventType.APPROVAL_DECIDED:
+        return f"{moment}  approval_decided  {approval_outcome(event, timezone)}"
+    if event.event_type == EventType.NOTIFICATION_DEGRADED:
+        return f"{moment}  {degraded_line(event)}"
     if event.event_type == EventType.ORACLE_SIGNAL:
         description = oracle_description(event)
         if description is not None:
@@ -107,6 +185,13 @@ def tail(
             finished = store.get_run(run_id).status.is_terminal
             for event in store.list_events(run_id, after_sequence=cursor):
                 output.info(format_event(event, timezone))
+                # Sino só para pedido ainda aberto: rever o histórico não dispara alertas antigos.
+                if (
+                    event.event_type == EventType.APPROVAL_REQUESTED
+                    and is_tty()
+                    and still_pending(store, event)
+                ):
+                    typer.echo(BELL, nl=False)
                 cursor = event.sequence
             if finished:
                 return

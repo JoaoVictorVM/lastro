@@ -8,6 +8,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from lastro.approvals.notifications import default_router
 from lastro.browser.control import HumanControl
 from lastro.browser.tools import NO_RUN, TOOLS, BrowserTools, input_schema
 from lastro.config.loader import load_project
@@ -18,7 +19,9 @@ async def serve(profile: str | None = None) -> None:
     project = load_project(profile=profile)
     history = open_history(project)
     run = history.get_active_run()
-    runtime = BrowserTools(project, history, run.id) if run else None
+    runtime = (
+        BrowserTools(project, history, run.id, notifier=default_router(history)) if run else None
+    )
     server = Server("lastro")
 
     @server.list_tools()

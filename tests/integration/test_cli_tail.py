@@ -175,3 +175,58 @@ def test_tail_formats_oracle_action_count_and_background(
     assert "no action (background)" in result.stdout
     assert "bad text" in result.stdout
     assert "\x1b" not in result.stdout and "\x07" not in result.stdout
+
+
+def test_tail_rings_only_for_new_pending_request_in_tty(
+    runner: CliRunner, store: HistoryStore, run_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    summary = "edit employee #57 (phone, email) in Clínica Aurora"
+    store.request_approval(run_id, "old", "a" * 64, {"summary": "old request"})
+    store.decide_approval("old", "skip", "cli")
+    polls: list[float] = []
+
+    def next_poll(seconds: float) -> None:
+        polls.append(seconds)
+        if len(polls) == 1:
+            store.request_approval(run_id, "act57", "b" * 64, {"summary": summary})
+        elif len(polls) == 2:
+            store.decide_approval("act57", "approve", "cli")
+        else:
+            store.finish_run(run_id, RunStatus.COMPLETED, "done")
+
+    monkeypatch.setattr(tail_cmd, "sleep", next_poll)
+    monkeypatch.setattr(tail_cmd, "is_tty", lambda: True)
+
+    result = runner.invoke(app, ["tail"])
+
+    assert result.exit_code == 0, result.output
+    plain = ANSI.sub("", result.stdout)
+    assert plain.count("\a") == 1
+    assert plain.count("==== APPROVAL REQUIRED ====") == 2
+    assert f"  {summary}" in plain
+    assert "Decide: lastro approve act57 [--skip | --end] (expires " in plain
+    assert re.search(r"approved by user at \d\d:\d\d \(act57\)", plain)
+    assert re.search(r"skipped by user at \d\d:\d\d \(old\)", plain)
+
+
+def test_tail_without_tty_never_rings_and_shows_degraded_fallback(
+    runner: CliRunner, store: HistoryStore, run_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record = store.request_approval(run_id, "act1", "a" * 64, {"summary": "edit employee #1"})
+    store.record_notification(
+        record,
+        "desktop",
+        "unsupported",
+        requested_at=store._clock(),  # pyright: ignore[reportPrivateUsage]
+        latency_ms=3,
+        error_code="notifier_not_found",
+    )
+    store.decide_approval("act1", "end_run", "cli")
+    monkeypatch.setattr(tail_cmd, "is_tty", lambda: False)
+
+    result = runner.invoke(app, ["tail", run_id])
+
+    plain = ANSI.sub("", result.stdout)
+    assert "\a" not in plain
+    assert "notification degraded (desktop: notifier_not_found)" in plain
+    assert re.search(r"run ended by user at \d\d:\d\d \(act1\)", plain)

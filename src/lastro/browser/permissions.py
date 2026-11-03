@@ -86,7 +86,28 @@ def pre_tool_use(data: dict[str, Any]) -> dict[str, object]:
 
 
 def notification(data: dict[str, Any]) -> dict[str, object]:
-    """Evento de notificação do executor; o envio desktop entra com o router de notificações."""
+    """Prompt de permissão do executor: avisa no desktop quando há pedido pendente na run."""
+    import asyncio
+    import uuid
+
+    from lastro.approvals.notifications import DesktopNotifier, NotificationRouter
+    from lastro.config.loader import load_config_file
+    from lastro.history import NotificationChannel, open_history
+
+    cwd = data.get("cwd")
+    try:
+        loaded = load_config_file(None, Path(cwd) if isinstance(cwd, str) else Path.cwd())
+        history = open_history(loaded)
+        run = history.get_active_run()
+        pending = history.pending_approval(run.id) if run is not None else None
+        if pending is None:
+            return {}
+        desktop = DesktopNotifier()
+        desktop.channel = NotificationChannel.EXECUTOR_HOOK
+        router = NotificationRouter(history, [desktop], attempt_key="hook-" + uuid.uuid4().hex)
+        asyncio.run(router.notify(pending))
+    except Exception:
+        return {}
     return {}
 
 
