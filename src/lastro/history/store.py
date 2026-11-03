@@ -156,6 +156,7 @@ from lastro.history.runs import (
     validate_mission,
 )
 from lastro.knowledge import (
+    Category,
     ConsolidationAttempt,
     EditDocument,
     KnowledgeDetail,
@@ -170,8 +171,11 @@ from lastro.knowledge import (
     QueryResult,
     RevalidateInput,
     RevalidationResult,
+    Scope,
+    SourceType,
     ValidationState,
 )
+from lastro.knowledge.models import Fact
 from lastro.mission.charter import DEFAULT_MAX_TIMEBOX_MINUTES, build_charter
 from lastro.mission.models import (
     ClarificationAnswer,
@@ -590,6 +594,40 @@ class HistoryStore:
                 conn, self.project_id, run_id, attempt_key, timestamp
             )
         )
+
+    def record_adapter_knowledge(
+        self,
+        *,
+        adapter: str,
+        source: SourceType,
+        source_ref: str,
+        flow: str,
+        category: Category,
+        fact: Fact,
+        scope: Scope,
+    ) -> KnowledgeEntry:
+        """Fronteira para adaptadores confiáveis de documentação, código e issues."""
+        timestamp = self._now()
+
+        def write(conn: sqlite3.Connection) -> KnowledgeEntry:
+            entry_id = knowledge.adapter_fact(
+                conn,
+                self.project_id,
+                adapter=adapter,
+                source=source,
+                source_ref=source_ref,
+                flow=flow,
+                category=category,
+                fact=fact,
+                scope=scope,
+                timestamp=timestamp,
+            )
+            return knowledge.select_entry(conn, self.project_id, entry_id)
+
+        return self._database.write(write)
+
+    def knowledge_extensions(self, entry_id: str) -> JsonObject:
+        return self._database.read(lambda conn: knowledge.entry_extensions(conn, entry_id))
 
     def memory_outcome(self, run_id: str) -> MemoryOutcome | None:
         return self._database.read(lambda conn: knowledge.select_outcome(conn, run_id))
@@ -1092,6 +1130,7 @@ class HistoryStore:
                 oracle_signals=tuple(
                     sorted(select_signals(conn, run_id), key=lambda signal: signal.last_event_id)
                 ),
+                memory=knowledge.select_outcome(conn, run_id),
             )
 
         return self._database.read(read)

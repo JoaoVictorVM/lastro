@@ -366,5 +366,8 @@ class ReportData:
     created_records: tuple[CreatedRecordView, ...]
     created_records_warning: str | None
     memory_outcome: str
+    memory_revision: int
+    memory_changed: int
+    memory_pending: int
     limitations: tuple[str, ...]
     missing_evidence: tuple[str, ...]

@@ -144,7 +144,7 @@ def test_report_renders_every_section_in_stable_order(history_context: ProjectCo
     assert "not\\_evaluated" in section(text, "## Criteria results")
     assert "No oracle signals." in text
     assert "No records were created." in text
-    assert "unavailable" in section(text, "## Memory outcome")
+    assert "Outcome: `nothing_new`" in section(text, "## Memory outcome")
     assert outcome.summary_lines == (
         "Status: completed (done)",
         "Criteria met: 1/2",

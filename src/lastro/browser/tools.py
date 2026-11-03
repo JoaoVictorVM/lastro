@@ -127,6 +127,14 @@ KNOWLEDGE_MODELS: dict[str, type[BaseModel]] = {
     "knowledge_revalidate": RevalidateInput,
 }
 NO_ACTIVE_RUN = "no_active_run"
+KNOWLEDGE_HINT: dict[str, Any] = {
+    "available": True,
+    "instruction": (
+        "After the plan is accepted, call knowledge_query with the flow key of the first flow "
+        "before exploring it. Remembered facts are hypotheses: confirm them in the current "
+        "interface with observe and knowledge_revalidate before relying on them."
+    ),
+}
 # Projeção estrutural da página: rótulos e propriedades, nunca valores digitados nos campos.
 PROJECTION_SCRIPT = r"""
 () => {
@@ -683,6 +691,7 @@ class BrowserTools:
                 "content_sha256": context.content_sha256,
                 "skill_bundle_sha256": context.skill_bundle_sha256,
                 "plan_status": context.plan_status.value,
+                "knowledge": KNOWLEDGE_HINT,
             }
         if isinstance(parsed, MissionPlanInput):
             submission = self.history.submit_mission_plan(

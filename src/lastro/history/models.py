@@ -6,6 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urljoin
 
+from lastro.knowledge.models import MemoryOutcome
 from lastro.oracles.models import OracleSignal
 
 MAX_MISSION_TEXT_LENGTH = 10_000
@@ -617,6 +618,8 @@ class ReportInputs:
     clarifications: tuple[Clarification, ...]
     created_records: tuple[CreatedRecord, ...]
     oracle_signals: tuple[OracleSignal, ...]
+    # Resultado corrente da memória; None em runs anteriores à memória persistente.
+    memory: MemoryOutcome | None = None
 
 
 APPROVAL_TTL_SECONDS = 900

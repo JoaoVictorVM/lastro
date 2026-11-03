@@ -237,3 +237,27 @@ def test_legacy_runs_have_no_invented_outcome(history_context: Any) -> None:
 
     assert history.memory_outcome(run_id) is None
     assert history.consolidate_memory(run_id).outcome == "nothing_new"
+
+
+def test_report_hash_changes_after_memory_recovery(knowledge: Any) -> None:
+    from lastro.reporting import ReportBuilder
+
+    history, run_id = knowledge.start()
+    knowledge.propose(history, run_id, knowledge.observe(history, run_id))
+    history.finish_run(run_id, RunStatus.CANCELLED, "cancelada")
+    builder = ReportBuilder(history)
+
+    before = builder.build_final(run_id)
+    history.consolidate_memory(run_id)
+    after = builder.build_final(run_id)
+
+    assert before.report_path is not None and after.report_path is not None
+    assert before.snapshot.input_sha256 != after.snapshot.input_sha256
+    assert before.report_path.name == "report.md"
+    assert after.report_path.name == "report.memory-r2.md"
+    old = before.report_path.read_text(encoding="utf-8")
+    new = after.report_path.read_text(encoding="utf-8")
+    assert "Outcome: `consolidation_pending`" in old
+    assert "lastro knowledge consolidate" in old
+    assert "Outcome: `updated`" in new and "Outcome revision: 2" in new
+    assert builder.build_final(run_id).snapshot.id == after.snapshot.id

@@ -732,6 +732,7 @@ def create_entry(
     timestamp: str,
     conflicts_with: tuple[str, ...] = (),
     history_payload: JsonObject | None = None,
+    extensions: JsonObject | None = None,
 ) -> str:
     if fact.type not in CATEGORY_FACTS[category]:
         raise KnowledgeError(INVALID_KNOWLEDGE, f"{fact.type} does not belong to {category}.")
@@ -750,7 +751,7 @@ def create_entry(
             project_id,
             run_id,
             base_state(source).value,
-            canonical_json({"schema_version": FACT_SCHEMA_VERSION}),
+            canonical_json({"schema_version": FACT_SCHEMA_VERSION, **(extensions or {})}),
             timestamp,
             timestamp,
             flow,
@@ -848,6 +849,80 @@ def _apply_proposal(
         (entry_id, timestamp, row["id"]),
     )
     return True
+
+
+ADAPTER_SOURCES = frozenset({SourceType.DOCUMENTATION, SourceType.CODE, SourceType.ISSUE})
+
+
+def adapter_fact(
+    conn: sqlite3.Connection,
+    project_id: str,
+    *,
+    adapter: str,
+    source: SourceType,
+    source_ref: str,
+    flow: str,
+    category: Category,
+    fact: Fact,
+    scope: Scope,
+    timestamp: str,
+) -> str:
+    """Entrada de adaptador confiável (documentação, código, issue), nunca do agente.
+
+    Código é sempre implementação inferida, não regra de negócio confirmada. Divergência com
+    entradas existentes contesta todas, como qualquer outra fonte.
+    """
+    if source not in ADAPTER_SOURCES:
+        raise KnowledgeError(INVALID_REFERENCE, f"{source.value} is not an adapter source.")
+    check_directives(fact)
+    ident = identity(fact)
+    decision = decide(
+        fact, ident.value_sha256, _actives(conn, project_id, flow, scope_key(scope), ident.key)
+    )
+    if decision.kind == "review":
+        raise KnowledgeError(INVALID_KNOWLEDGE, decision.reason or "review required")
+    if decision.kind == "deduplicate":
+        assert decision.entry_id is not None
+        current = conn.execute(
+            "SELECT revision FROM knowledge WHERE id = ?", (decision.entry_id,)
+        ).fetchone()
+        _history(
+            conn,
+            decision.entry_id,
+            HistoryOperation.EVIDENCE_ADDED,
+            Actor.ADAPTER,
+            int(current["revision"]),
+            {"adapter": adapter, "source": source.value, "source_ref": source_ref},
+            timestamp,
+        )
+        return decision.entry_id
+    extensions: JsonObject = {"adapter": adapter}
+    if source == SourceType.CODE:
+        extensions["inference"] = "implementation"
+    return create_entry(
+        conn,
+        project_id=project_id,
+        run_id=None,
+        flow=flow,
+        category=category,
+        fact=fact,
+        source=source,
+        source_ref=source_ref,
+        scope=scope,
+        system_version=None,
+        observed_at=timestamp,
+        last_verified_at=None,
+        actor=Actor.ADAPTER,
+        timestamp=timestamp,
+        conflicts_with=decision.conflicts_with,
+        history_payload={"adapter": adapter},
+        extensions=extensions,
+    )
+
+
+def entry_extensions(conn: sqlite3.Connection, entry_id: str) -> JsonObject:
+    row = conn.execute("SELECT payload_json FROM knowledge WHERE id = ?", (entry_id,)).fetchone()
+    return _object(row["payload_json"]) if row is not None else {}
 
 
 def consolidate_pending(

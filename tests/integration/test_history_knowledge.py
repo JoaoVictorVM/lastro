@@ -158,3 +158,58 @@ def test_query_requires_active_run(knowledge: Any) -> None:
     with pytest.raises(KnowledgeError) as info:
         history.query_knowledge(run_id, QueryInput(flow="employee"))
     assert info.value.code == "no_active_run"
+
+
+def test_trusted_adapters_extend_sources_and_contest(knowledge: Any) -> None:
+    from lastro.knowledge import Category
+    from lastro.knowledge.models import FieldPropertyFact
+
+    history, run_id = knowledge.start()
+    knowledge.propose(history, run_id, knowledge.observe(history, run_id), value=True)
+    history.finish_run(run_id, RunStatus.COMPLETED)
+    (observed,) = history.list_knowledge()
+
+    def fact(value: bool) -> FieldPropertyFact:
+        return FieldPropertyFact(
+            type="field_property",
+            subject="employee",
+            field="cpf",
+            attribute="required",
+            value=value,
+        )
+
+    same = history.record_adapter_knowledge(
+        adapter="fake-docs",
+        source=SourceType.DOCUMENTATION,
+        source_ref="docs/employees.md#cpf",
+        flow="employee",
+        category=Category.SCREEN_COMPONENT,
+        fact=fact(True),
+        scope=observed.scope,
+    )
+    inferred = history.record_adapter_knowledge(
+        adapter="fake-code",
+        source=SourceType.CODE,
+        source_ref="src/employees/form.py:42",
+        flow="employee",
+        category=Category.SCREEN_COMPONENT,
+        fact=fact(False),
+        scope=observed.scope,
+    )
+
+    assert same.id == observed.id
+    assert history.knowledge_detail(observed.id).history[-1].actor == "adapter"
+    assert inferred.source_type == SourceType.CODE
+    assert inferred.validation_state == ValidationState.CONTESTED
+    assert history.knowledge_extensions(inferred.id)["inference"] == "implementation"
+    assert history.knowledge_detail(observed.id).entry.conflict_ids == (inferred.id,)
+    with pytest.raises(KnowledgeError):
+        history.record_adapter_knowledge(
+            adapter="fake",
+            source=SourceType.OBSERVATION,
+            source_ref="x",
+            flow="employee",
+            category=Category.SCREEN_COMPONENT,
+            fact=fact(True),
+            scope=observed.scope,
+        )
