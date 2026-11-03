@@ -5,7 +5,6 @@ import typer
 from lastro.cli import output
 
 STUB_COMMANDS: dict[str, str] = {
-    "knowledge": "Gerencia a base de conhecimento do sistema alvo.",
     "eval": "Executa avaliações do agente.",
 }
 
