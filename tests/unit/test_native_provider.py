@@ -107,6 +107,7 @@ def test_retry_succeeds_with_new_reservation() -> None:
 
 
 def test_sdk_retries_disabled() -> None:
+    pytest.importorskip("anthropic", reason="native extra not installed")
     from lastro.native.provider import AnthropicProvider
 
     provider = AnthropicProvider("sk-ant-test-not-real")
@@ -160,6 +161,7 @@ def test_missing_usage_is_uncertain_not_zero() -> None:
 
 
 def test_error_translation_from_sdk() -> None:
+    pytest.importorskip("anthropic", reason="native extra not installed")
     import anthropic
     import httpx
 

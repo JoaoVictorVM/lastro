@@ -147,6 +147,15 @@ class NativeAgent:
         except HistoryUnavailableError:
             raise TerminalSignal("interrupted", "history_unavailable") from None
         messages.append({"role": "assistant", "content": response.content})
+        usage = response.usage
+        self.write(
+            f"model {node} #{step}: "
+            + (
+                f"in {usage.total_input_tokens} out {usage.output_tokens} tokens"
+                if usage is not None
+                else "usage unknown"
+            )
+        )
         seen = set(state.get("seen_tool_ids", []))
         uses = response.tool_uses()
         problem = response_problem(response, seen)

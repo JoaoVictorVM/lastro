@@ -120,9 +120,16 @@ def native_snapshot(context: ProjectContext) -> JsonObject:
     from lastro.native.pricing import document_sha256, pricing_document
 
     settings = context.profile.native
-    data: JsonObject = settings.model_dump(mode="json")
-    data["pricing_sha256"] = document_sha256(pricing_document(settings.models()))
-    return data
+    # Nomes sem "token": a redação central apagaria valores de chaves com essa palavra.
+    return {
+        "model": settings.model,
+        "node_models": dict(settings.node_models),
+        "max_output": settings.max_output_tokens,
+        "context_limit": settings.context_token_limit,
+        "cost_cap_usd": settings.cost_cap_usd,
+        "suite_cost_cap_usd": settings.suite_cost_cap_usd,
+        "pricing_sha256": document_sha256(pricing_document(settings.models())),
+    }
 
 
 def run_from_row(row: sqlite3.Row) -> RunRecord:

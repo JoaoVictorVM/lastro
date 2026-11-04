@@ -4,7 +4,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urljoin
+
+if TYPE_CHECKING:
+    from lastro.history.native import NativeUsage
 
 from lastro.knowledge.models import MemoryOutcome
 from lastro.oracles.models import OracleSignal
@@ -625,6 +629,8 @@ class ReportInputs:
     oracle_signals: tuple[OracleSignal, ...]
     # Resultado corrente da memória; None em runs anteriores à memória persistente.
     memory: MemoryOutcome | None = None
+    # Consumo de modelo do executor nativo; None para executores externos.
+    model_usage: "NativeUsage | None" = None
 
 
 APPROVAL_TTL_SECONDS = 900

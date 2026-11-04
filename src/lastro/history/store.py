@@ -1131,6 +1131,9 @@ class HistoryStore:
                     sorted(select_signals(conn, run_id), key=lambda signal: signal.last_event_id)
                 ),
                 memory=knowledge.select_outcome(conn, run_id),
+                model_usage=native.usage(conn, run_id)
+                if native.has_context(conn, run_id)
+                else None,
             )
 
         return self._database.read(read)

@@ -5,6 +5,8 @@ from typing import Any, cast
 
 import pytest
 
+pytest.importorskip("langgraph", reason="native extra not installed")
+
 from lastro.config.loader import ProjectContext
 from lastro.config.native import NativeSettings
 from lastro.history import ApprovalStatus, EventType, TextMission, open_history

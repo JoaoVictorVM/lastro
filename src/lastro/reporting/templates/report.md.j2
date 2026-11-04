@@ -76,6 +76,20 @@
 - Inconclusive findings: {{ report.summary.inconclusive }}
 - Agent and tool failures: {{ report.summary.harness_failures }}
 - Integrity: {{ "valid" if report.summary.integrity_valid else "invalid (see limitations)" }}
+{% if report.model_usage %}
+
+## Model usage
+
+- Model calls: {{ report.model_usage.calls }}
+- Input tokens: {{ report.model_usage.input_tokens }} (cache read {{ report.model_usage.cache_read_tokens }}, cache write {{ report.model_usage.cache_write_tokens }})
+- Output tokens: {{ report.model_usage.output_tokens }}
+- Confirmed cost: USD {{ report.model_usage.confirmed_usd }} (cap USD {{ report.model_usage.cap_usd }})
+{% if report.model_usage.uncertain_calls %}
+- Committed cost (conservative): USD {{ report.model_usage.committed_usd }}; {{ report.model_usage.uncertain_calls }} attempt(s) with unknown usage, not counted as zero
+{% endif %}
+
+Costs are computed from provider-reported usage and the pricing frozen for this run; they are not a reconciled invoice.
+{% endif %}
 
 ## Mission and charter
 

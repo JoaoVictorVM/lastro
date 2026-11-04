@@ -316,6 +316,21 @@ class SummaryView:
 
 
 @dataclass(frozen=True)
+class ModelUsageView:
+    """Consumo durável do executor nativo; incerteza nunca é apresentada como zero."""
+
+    calls: int
+    uncertain_calls: int
+    input_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    output_tokens: int
+    confirmed_usd: str
+    committed_usd: str
+    cap_usd: str
+
+
+@dataclass(frozen=True)
 class MissionView:
     source: str
     text: str | None
@@ -371,3 +386,4 @@ class ReportData:
     memory_pending: int
     limitations: tuple[str, ...]
     missing_evidence: tuple[str, ...]
+    model_usage: ModelUsageView | None = None

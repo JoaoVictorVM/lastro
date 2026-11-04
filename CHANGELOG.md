@@ -50,6 +50,12 @@ list the intended scope and contain no shipped changes until their release date 
   current observation, consolidation with contested alternatives when a run ends, one memory
   outcome per run with private fallback and retry, and `lastro knowledge` commands for human
   review.
+- Native executor (`native` extra): a LangGraph agent loop that calls Claude through the
+  Anthropic SDK and uses only the Lastro MCP tool server, `lastro run start --executor native`
+  and `lastro init --executor native`, terminal approval prompts through the same decision
+  path as `lastro approve`, a durable ledger that reserves every model call against the run
+  and suite cost caps before sending it, partial reports on `limit_reached (cost_cap)`, and
+  per-attempt model telemetry with tokens, cost and latency.
 
 ## [1.0.0] - Planned
 

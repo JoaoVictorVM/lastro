@@ -384,11 +384,14 @@ def settle(conn: sqlite3.Connection, call_id: str, data: Settlement, timestamp: 
     tools: list[JsonValue] = [{"id": tid, "name": name} for tid, name in data.tool_calls]
     payload = _base_payload(current) | {
         "request_id": data.request_id,
-        "input_tokens": data.input_tokens,
-        "cache_read_input_tokens": data.cache_read_tokens,
-        "cache_creation_input_tokens": data.cache_write_tokens,
-        "total_input_tokens": data.input_tokens + data.cache_read_tokens + data.cache_write_tokens,
-        "output_tokens": data.output_tokens,
+        # Contagens fora de chaves com "token": a redação central trataria como segredo.
+        "usage": {
+            "input": data.input_tokens,
+            "cache_read_input": data.cache_read_tokens,
+            "cache_creation_input": data.cache_write_tokens,
+            "total_input": data.input_tokens + data.cache_read_tokens + data.cache_write_tokens,
+            "output": data.output_tokens,
+        },
         "latency_ms": data.latency_ms,
         "cost_usd": _usd(data.actual_nusd),
         "pricing_id": data.pricing_id,
@@ -444,8 +447,7 @@ def fail(
         "latency_ms": latency_ms,
         "error_code": error_code,
         "usage_status": "not_charged" if target == "released" else "uncertain",
-        "input_tokens": None,
-        "output_tokens": None,
+        "usage": None,
         "cost_usd": None,
     }
     event_id: int | None = None

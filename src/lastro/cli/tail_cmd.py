@@ -127,6 +127,44 @@ def oracle_description(event: EventRecord) -> str | None:
     return f"ORACLE {kind} {method} {path} {detail} ({action}) occurrences: {terminal_text(count)}"
 
 
+def native_line(event: EventRecord) -> str | None:
+    """Eventos do executor nativo em uma linha: nó, tokens e custo, sem conteúdo do modelo."""
+    payload = event.payload
+    if not isinstance(payload, dict):
+        return None
+    node = _field(payload, "node")
+    attempt = _field(payload, "attempt")
+    if event.event_type == EventType.MODEL_CALL_STARTED:
+        reserved = _field(payload, "reserved_cost_usd")
+        return f"model {node} attempt {attempt} sent (reserved USD {reserved})"
+    if event.event_type == EventType.MODEL_CALL_COMPLETED:
+        tools = payload.get("tool_calls")
+        names = ", ".join(
+            terminal_text(item.get("name"))
+            for item in (tools if isinstance(tools, list) else [])
+            if isinstance(item, dict)
+        )
+        usage = payload.get("usage")
+        return (
+            f"model {node} in {_field(usage, 'total_input')} "
+            f"out {_field(usage, 'output')} USD {_field(payload, 'cost_usd')} "
+            f"{_field(payload, 'latency_ms')} ms" + (f" -> {names}" if names else "")
+        )
+    if event.event_type == EventType.MODEL_CALL_FAILED:
+        return (
+            f"model {node} attempt {attempt} failed ({_field(payload, 'error_code')}); "
+            f"usage {_field(payload, 'usage_status')}"
+        )
+    if event.event_type == EventType.AGENT_FAILURE:
+        return f"agent failure {_field(payload, 'code')} {_field(payload, 'tool_name')}".rstrip()
+    if event.event_type == EventType.NATIVE_STARTED:
+        return (
+            f"native executor started (catalog {_field(payload, 'catalog_sha256')[:12]}, "
+            f"bundle {_field(payload, 'skill_bundle_sha256')[:12]})"
+        )
+    return None
+
+
 def describe(event: EventRecord) -> str:
     if event.tool_name is not None:
         text = event.tool_name
@@ -146,6 +184,9 @@ def format_event(event: EventRecord, timezone: str) -> str:
         return f"{moment}  approval_decided  {approval_outcome(event, timezone)}"
     if event.event_type == EventType.NOTIFICATION_DEGRADED:
         return f"{moment}  {degraded_line(event)}"
+    native = native_line(event)
+    if native is not None:
+        return f"{moment}  {native}"
     if event.event_type == EventType.ORACLE_SIGNAL:
         description = oracle_description(event)
         if description is not None:

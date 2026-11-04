@@ -187,6 +187,10 @@ def test_init_and_doctor_do_not_require_claude(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from lastro.doctor.runner import run_doctor
+    from lastro.native import missing_dependencies
+
+    if missing_dependencies():
+        pytest.skip("native extra not installed")
 
     result = runner.invoke(
         app,
