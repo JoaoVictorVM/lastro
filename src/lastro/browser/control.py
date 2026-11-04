@@ -11,8 +11,10 @@ from typing import Any, cast
 from lastro.approvals.proof import ProofError, verify
 from lastro.auth.storage import create_private_file, ensure_private_directory
 from lastro.browser.tools import BrowserTools
-from lastro.history import ApprovalChoice, DecidedBy, HistoryError
+from lastro.history import ApprovalChoice, DecidedBy, HistoryError, RunStatus
 from lastro.history.approvals import nonce_digest
+
+TERMINATE_OPERATION = "terminate_run"
 
 
 def write_private(path: Path, data: dict[str, object]) -> None:
@@ -74,12 +76,13 @@ class HumanControl:
             try:
                 message = read_message(request)
                 request.unlink()
-                if (
-                    set(message) != {"secret", "run_id", "operation", "nonce"}
-                    or not isinstance(message["secret"], str)
-                    or not secrets.compare_digest(message["secret"], self.secret)
-                    or message["run_id"] != self.runtime.run_id
-                    or message["operation"] != "reverify-tenant"
+                if not self.authentic(message):
+                    continue
+                if message["operation"] == TERMINATE_OPERATION:
+                    await self.terminate(message)
+                    continue
+                if set(message) != {"secret", "run_id", "operation", "nonce"} or (
+                    message["operation"] != "reverify-tenant"
                 ):
                     continue
                 async with self.runtime.session.lock:
@@ -97,6 +100,45 @@ class HumanControl:
                 )
             except Exception:
                 self.runtime.session.policy.locks.add("tenant")
+
+    def authentic(self, message: dict[str, Any]) -> bool:
+        secret = message.get("secret")
+        return (
+            isinstance(secret, str)
+            and secrets.compare_digest(secret, self.secret)
+            and message.get("run_id") == self.runtime.run_id
+            and isinstance(message.get("nonce"), str)
+        )
+
+    async def terminate(self, message: dict[str, Any]) -> None:
+        """Encerramento confiável do runner nativo: estado e motivo restritos, eco do nonce."""
+        from lastro.browser.lifecycle import TRUSTED_REASONS, TRUSTED_STATUSES, finalize
+
+        status, reason = message.get("status"), message.get("reason")
+        if (
+            set(message) != {"secret", "run_id", "operation", "nonce", "status", "reason"}
+            or status not in {item.value for item in TRUSTED_STATUSES}
+            or reason not in TRUSTED_REASONS
+        ):
+            response: dict[str, object] = {"nonce": message["nonce"], "error": "invalid_request"}
+        else:
+            async with self.runtime.session.lock:
+                result = await finalize(
+                    self.runtime, RunStatus(status), str(reason), skip_reason=str(reason)
+                )
+            response = {
+                "nonce": message["nonce"],
+                "status": result["status"],
+                "already_ended": bool(result.get("already_ended")),
+                "report_status": result.get("report_status"),
+                "report_kind": result.get("report_kind"),
+                "report_path": result.get("report_path"),
+            }
+            if "capture_error" in result:
+                response["capture_error"] = str(result["capture_error"])[:500]
+            if "report_error" in result:
+                response["report_error"] = str(result["report_error"])[:500]
+        write_private(self.directory / "response.json", response)
 
     def accept_proof(self, action_id: str, token: str) -> bool:
         """Prova do prompt nativo: grava approve do executor uma única vez, nunca por argumento."""
@@ -150,5 +192,37 @@ def request_reverification(root: Path, run_id: str) -> str:
             if data.get("nonce") == nonce:
                 response.unlink()
                 return str(data["result"])
+        time.sleep(0.1)
+    raise ValueError("Browser owner unavailable or busy")
+
+
+def request_termination(
+    root: Path, run_id: str, status: str, reason: str, timeout: float = 60.0
+) -> dict[str, Any]:
+    """Pede ao owner que bloqueie escritas, finalize e gere o relatório; nunca abre browser."""
+    directory = control_directory(root, run_id)
+    secret = owner_secret(root, run_id)
+    nonce = secrets.token_hex(16)
+    write_private(
+        directory / "request.json",
+        {
+            "secret": secret,
+            "run_id": run_id,
+            "operation": TERMINATE_OPERATION,
+            "nonce": nonce,
+            "status": status,
+            "reason": reason,
+        },
+    )
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        response = directory / "response.json"
+        if response.exists():
+            data = read_message(response)
+            if data.get("nonce") == nonce:
+                response.unlink()
+                if "error" in data:
+                    raise ValueError(str(data["error"]))
+                return data
         time.sleep(0.1)
     raise ValueError("Browser owner unavailable or busy")

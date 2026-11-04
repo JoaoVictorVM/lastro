@@ -2,6 +2,9 @@
 
 import argparse
 import asyncio
+import os
+import sys
+from pathlib import Path
 from typing import Any
 
 from mcp.server.lowlevel import Server
@@ -18,14 +21,37 @@ from lastro.browser.tools import (
     BrowserTools,
     input_schema,
 )
-from lastro.config.loader import load_project
-from lastro.history import open_history
+from lastro.config.loader import ProjectContext, load_project
+from lastro.history import HistoryStore, RunRecord, open_history
 
 
-async def serve(profile: str | None = None) -> None:
-    project = load_project(profile=profile)
+class PinnedRunError(RuntimeError):
+    pass
+
+
+def pinned_context(
+    project: ProjectContext, history: HistoryStore, run_id: str
+) -> tuple[ProjectContext, RunRecord]:
+    """Run fixada pelo executor nativo: ativa, do mesmo projeto e perfil, com seu executor."""
+    run = history.get_active_run(run_id)
+    if run is None:
+        raise PinnedRunError(f"run {run_id} is not active")
+    if run.project_id != project.require_project_id() or run.profile != project.profile_name:
+        raise PinnedRunError(f"run {run_id} belongs to another project or profile")
+    return project.with_executor(run.executor_name), run
+
+
+async def serve(
+    profile: str | None = None, run_id: str | None = None, config: Path | None = None
+) -> None:
+    project = load_project(config, profile=profile)
     history = open_history(project)
-    run = history.get_active_run()
+    if run_id is None:
+        run = history.get_active_run()
+    else:
+        # A chave do provedor pertence só ao processo do executor, nunca ao browser.
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        project, run = pinned_context(project, history, run_id)
     runtime = (
         BrowserTools(project, history, run.id, notifier=default_router(history)) if run else None
     )
@@ -73,8 +99,14 @@ async def serve(profile: str | None = None) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--profile")
+    parser.add_argument("--run-id")
+    parser.add_argument("--config", type=Path)
     arguments = parser.parse_args()
-    asyncio.run(serve(arguments.profile))
+    try:
+        asyncio.run(serve(arguments.profile, arguments.run_id, arguments.config))
+    except PinnedRunError as error:
+        print(f"lastro-browser: {error}", file=sys.stderr)
+        raise SystemExit(2) from None
 
 
 if __name__ == "__main__":

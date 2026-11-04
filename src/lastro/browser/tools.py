@@ -51,7 +51,6 @@ from lastro.mission import (
 )
 from lastro.mission.models import EXPLORATION_TOOLS
 from lastro.oracles.models import OracleSignal
-from lastro.reporting.builder import ReportBuilder
 from lastro.reporting.models import (
     CriterionResultInput,
     FindingInput,
@@ -790,35 +789,12 @@ class BrowserTools:
 
     async def end_run(self, args: Arguments) -> dict[str, Any]:
         """Fecha a captura e o browser, sela critérios com a run ativa e só então termina."""
-        self.approvals.skip_pending("run_ended_by_agent")
-        self.approvals.close()
-        try:
-            await self.video.close()
-        finally:
-            await self.session.close()
-        self.history.seal_criterion_results(self.run_id)
-        self.history.finish_run(self.run_id, RunStatus(args.outcome), args.reason)
-        result: dict[str, Any] = {"status": args.outcome}
-        memory = self.history.memory_outcome(self.run_id)
-        if memory is not None:
-            result.update(
-                memory_outcome=memory.outcome.value,
-                memory_pending=memory.pending_count,
-            )
-        # O relatório fica fora da transação terminal: falhar aqui nunca reabre nem muda a run.
-        try:
-            report = ReportBuilder(self.history).build_final(self.run_id)
-        except Exception as error:
-            result.update(report_status="failed", report_error=self.session.sanitize(str(error)))
-            return result
-        result.update(
-            report_status=report.status.value,
-            report_path=str(report.report_path or report.fallback_path or ""),
-            issue_paths=[str(path) for path in report.issue_paths],
-            summary=list(report.summary_lines),
+        from lastro.browser.lifecycle import finalize
+
+        result = await finalize(
+            self, RunStatus(args.outcome), args.reason, skip_reason="run_ended_by_agent"
         )
-        if report.snapshot.error_text:
-            result["report_error"] = report.snapshot.error_text
+        result.pop("report_kind", None)
         return result
 
     async def prepare(
