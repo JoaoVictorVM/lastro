@@ -116,6 +116,15 @@ from lastro.history.models import (
     can_transition,
     unidentified_warning,
 )
+from lastro.history.native import (
+    BudgetError,
+    BudgetExceededError,
+    ModelCall,
+    NativeContextInput,
+    NativeUsage,
+    ReservationInput,
+    Settlement,
+)
 from lastro.history.processes import ProcessChecker, process_exists
 from lastro.history.store import HistoryStore, open_history
 from lastro.oracles.models import OracleOccurrence, OracleSignal
@@ -155,6 +164,8 @@ __all__ = [
     "ArtifactType",
     "BackupError",
     "BackupResult",
+    "BudgetError",
+    "BudgetExceededError",
     "Clarification",
     "ClarificationStatus",
     "CleanupResult",
@@ -203,6 +214,9 @@ __all__ = [
     "MissionPlan",
     "MissionPlanError",
     "MissionSource",
+    "ModelCall",
+    "NativeContextInput",
+    "NativeUsage",
     "NotificationAttempt",
     "NotificationChannel",
     "NotificationStatus",
@@ -221,6 +235,7 @@ __all__ = [
     "ReportingError",
     "ReproductionAttempt",
     "ReproductionOutcome",
+    "ReservationInput",
     "ResultSource",
     "RetryPolicy",
     "RunFilter",
@@ -230,6 +245,7 @@ __all__ = [
     "RunRecord",
     "RunStatus",
     "RunSummary",
+    "Settlement",
     "SeveritySuggestion",
     "SnapshotStatus",
     "TextMission",

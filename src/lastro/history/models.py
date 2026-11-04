@@ -75,6 +75,11 @@ class EventType(StrEnum):
     LIMIT_HIT = "limit_hit"
     RUN_ENDED = "run_ended"
     NOTIFICATION_DEGRADED = "notification_degraded"
+    NATIVE_STARTED = "native_started"
+    MODEL_CALL_STARTED = "model_call_started"
+    MODEL_CALL_COMPLETED = "model_call_completed"
+    MODEL_CALL_FAILED = "model_call_failed"
+    AGENT_FAILURE = "agent_failure"
 
 
 # Somente o registro abre e fecha a run; consumidores não anexam esses dois tipos.

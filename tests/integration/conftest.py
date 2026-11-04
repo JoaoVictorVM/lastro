@@ -283,3 +283,55 @@ class KnowledgeHarness:
 @pytest.fixture
 def knowledge(history_context_for: Callable[[str], ProjectContext]) -> KnowledgeHarness:
     return KnowledgeHarness(history_context_for)
+
+
+@dataclass
+class NativeHarness:
+    """Runs nativas com contexto e orçamento reais no histórico, sem browser nem provedor."""
+
+    context: Callable[[str], ProjectContext]
+
+    def history(self, **kwargs: Any) -> Any:
+        from lastro.history import open_history
+
+        return open_history(self.context("homolog").with_executor("native"), **kwargs)
+
+    def start(
+        self, history: Any, *, cap_nusd: int = 2_000_000_000, suite: str | None = None
+    ) -> str:
+        from lastro.history import NativeContextInput, TextMission
+
+        context = self.context("homolog").with_executor("native")
+        run = history.create_run(context, TextMission("Explore employees"))
+        history.start_native_run(
+            NativeContextInput(
+                run_id=run.record.id,
+                cap_nusd=cap_nusd,
+                suite_budget_id=suite,
+                catalog=[{"name": "observe", "description": "d", "input_schema": {}}],
+                catalog_sha256="a" * 64,
+                pricing={"models": {}},
+                pricing_sha256="b" * 64,
+                runtime_versions={"lastro": "0"},
+            )
+        )
+        return run.record.id
+
+    def reservation(self, run_id: str, amount: int, step: int = 1, attempt: int = 1) -> Any:
+        from lastro.history import ReservationInput
+
+        return ReservationInput(
+            run_id=run_id,
+            step_index=step,
+            attempt=attempt,
+            node="decide",
+            model="claude-sonnet-5-5",
+            payload_sha256="c" * 64,
+            max_output_tokens=2048,
+            reserved_nusd=amount,
+        )
+
+
+@pytest.fixture
+def native_harness(history_context_for: Callable[[str], ProjectContext]) -> NativeHarness:
+    return NativeHarness(history_context_for)

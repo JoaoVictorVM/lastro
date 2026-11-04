@@ -94,13 +94,15 @@ def _read_mission_file(path: Path) -> bytes:
 
 def config_snapshot(context: ProjectContext) -> JsonObject:
     """Configuração efetiva da run, sem credenciais e com os limites preservados."""
-    profile = context.profile.model_dump(mode="json", exclude={"credentials", "run_limits"})
+    profile = context.profile.model_dump(
+        mode="json", exclude={"credentials", "run_limits", "native"}
+    )
     run_limits: JsonObject = {
         key: redact_text(value) if isinstance(value, str) else value
         for key, value in context.profile.run_limits.items()
         if isinstance(value, str | int | float)
     }
-    return {
+    snapshot: JsonObject = {
         "project_id": context.require_project_id(),
         "profile": context.profile_name,
         "timezone": context.timezone,
@@ -108,6 +110,19 @@ def config_snapshot(context: ProjectContext) -> JsonObject:
         "environment": redact(profile),
         "run_limits": run_limits,
     }
+    if context.config.executor == "native":
+        snapshot["native"] = native_snapshot(context)
+    return snapshot
+
+
+def native_snapshot(context: ProjectContext) -> JsonObject:
+    """Configuração nativa efetiva e hash da tabela de preços congelada para a run."""
+    from lastro.native.pricing import document_sha256, pricing_document
+
+    settings = context.profile.native
+    data: JsonObject = settings.model_dump(mode="json")
+    data["pricing_sha256"] = document_sha256(pricing_document(settings.models()))
+    return data
 
 
 def run_from_row(row: sqlite3.Row) -> RunRecord:

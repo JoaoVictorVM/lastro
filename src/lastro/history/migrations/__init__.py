@@ -19,6 +19,7 @@ from lastro.history.migrations import (
     v005_reporting,
     v006_approval_gates,
     v007_persistent_memory,
+    v008_native_executor,
 )
 from lastro.timeutil import utc_now_iso
 
@@ -56,6 +57,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration.from_module(v005_reporting),
     Migration.from_module(v006_approval_gates),
     Migration.from_module(v007_persistent_memory),
+    Migration.from_module(v008_native_executor),
 )
 
 

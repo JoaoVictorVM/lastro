@@ -8,6 +8,7 @@ import typer
 
 from lastro.cli import output
 from lastro.cli.state import HISTORY_ERROR_EXIT_CODE, get_state
+from lastro.executors import get_executor, supported_executors
 from lastro.history import (
     MAX_MISSION_TEXT_LENGTH,
     CreatedRun,
@@ -52,8 +53,10 @@ def _bundle_hash(project_dir: Path, executor: str) -> str:
     except BundleError as exc:
         output.error(str(exc))
         raise typer.Exit(code=USAGE_EXIT_CODE) from None
-    instructions = project_dir / executor_spec(executor).instruction_file
-    problems = instruction_problems(instructions, check_length=False)
+    external = executor_spec(executor).external
+    if external is None:
+        return bundle.sha256
+    problems = instruction_problems(project_dir / external.instruction_file, check_length=False)
     if problems:
         output.error(
             f"Instruções do executor inválidas: {'; '.join(problems)}; rode 'lastro init'."
@@ -82,14 +85,26 @@ def start(
         Path | None,
         typer.Option("--mission-file", help="Arquivo com a missão (ex.: missions/cadastro.md)."),
     ] = None,
+    executor: Annotated[
+        str | None,
+        typer.Option(
+            "--executor",
+            help=f"Executor só desta run ({supported_executors()}); padrão: o do lastro.toml.",
+        ),
+    ] = None,
 ) -> None:
     """Registra a run, imprime o id e a pasta e entrega o controle ao executor."""
     chosen = mission_from_options(mission, mission_file)
     if chosen is None:
         output.error(MISSION_SOURCE_MESSAGE)
         raise typer.Exit(code=USAGE_EXIT_CODE)
+    if executor is not None and get_executor(executor) is None:
+        output.error(f"Executor não suportado: {executor} (suportados: {supported_executors()}).")
+        raise typer.Exit(code=USAGE_EXIT_CODE)
     state = get_state(ctx)
     project = state.require_history_project()
+    if executor is not None:
+        project = project.with_executor(executor)
     bundle_hash = _bundle_hash(project.loaded.project_dir, project.config.executor)
     store = state.open_history(project)
     try:

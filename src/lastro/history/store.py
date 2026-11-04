@@ -14,7 +14,7 @@ from pathlib import Path
 
 from lastro import get_version
 from lastro.config.loader import LoadedConfig, ProjectContext
-from lastro.history import approvals, knowledge
+from lastro.history import approvals, knowledge, native
 from lastro.history.artifacts import (
     StoredFile,
     insert_artifact,
@@ -1187,6 +1187,73 @@ class HistoryStore:
             self._database, self._layout, self.project_id, destination, self._clock()
         )
 
+    def create_suite_budget(self, cap_nusd: int) -> str:
+        """Orçamento de suíte do projeto; o id vem daqui, nunca do modelo nem do runner."""
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: native.create_suite_budget(conn, self.project_id, cap_nusd, timestamp)
+        )
+
+    def start_native_run(self, data: native.NativeContextInput) -> None:
+        """Orçamento da run, snapshot nativo e native_started numa única transação."""
+        timestamp = self._now()
+        self._database.write(
+            lambda conn: native.create_run_context(conn, self.project_id, data, timestamp)
+        )
+
+    def has_native_context(self, run_id: str) -> bool:
+        return self._database.read(lambda conn: native.has_context(conn, run_id))
+
+    def reserve_model_call(self, data: native.ReservationInput) -> native.ModelCall:
+        if data.run_id in self._failed_closed:
+            raise HistoryUnavailableError()
+        timestamp = self._now()
+        call_id = "call_" + secrets.token_hex(12)
+        return self._database.write(lambda conn: native.reserve(conn, data, call_id, timestamp))
+
+    def mark_model_call_sent(self, call_id: str) -> native.ModelCall:
+        timestamp = self._now()
+        return self._database.write(lambda conn: native.mark_sent(conn, call_id, timestamp))
+
+    def settle_model_call(self, call_id: str, data: native.Settlement) -> native.ModelCall:
+        timestamp = self._now()
+        return self._database.write(lambda conn: native.settle(conn, call_id, data, timestamp))
+
+    def fail_model_call(
+        self,
+        call_id: str,
+        *,
+        released: bool,
+        error_code: str,
+        latency_ms: int | None = None,
+        request_id: str | None = None,
+    ) -> native.ModelCall:
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: native.fail(
+                conn,
+                call_id,
+                released=released,
+                error_code=error_code,
+                latency_ms=latency_ms,
+                request_id=request_id,
+                timestamp=timestamp,
+            )
+        )
+
+    def list_model_calls(self, run_id: str) -> list[native.ModelCall]:
+        return self._database.read(lambda conn: native.select_calls(conn, run_id))
+
+    def native_usage(self, run_id: str) -> native.NativeUsage | None:
+        def read(conn: sqlite3.Connection) -> native.NativeUsage | None:
+            return native.usage(conn, run_id) if native.has_context(conn, run_id) else None
+
+        return self._database.read(read)
+
+    def reconcile_model_calls(self) -> list[str]:
+        timestamp = self._now()
+        return self._database.write(lambda conn: native.reconcile_terminal(conn, timestamp))
+
     def list_runs(self, run_filter: RunFilter | None = None) -> list[RunSummary]:
         selected = run_filter or RunFilter()
         return self._database.read(lambda conn: select_runs(conn, selected))
@@ -1253,6 +1320,7 @@ def open_history(
         owner_pid=owner_pid,
     )
     store.reconcile_orphans()
+    store.reconcile_model_calls()
     store.recover_memory_fallbacks()
     store.expire_approvals()
     return store

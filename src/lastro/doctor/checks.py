@@ -18,6 +18,7 @@ from lastro.config.loader import ENV_FILENAME, LoadedConfig
 from lastro.config.schema import DEFAULT_EXECUTOR, Profile
 from lastro.executors import get_executor, supported_executors
 from lastro.mission import BundleError, instruction_problems, verify_bundle
+from lastro.native import missing_dependencies as native_missing_dependencies
 from lastro.paths import ensure_writable, is_inside_git_tree
 
 MIN_PYTHON = (3, 12)
@@ -155,6 +156,7 @@ class DoctorEnvironment:
     environ: Mapping[str, str] = field(default_factory=lambda: os.environ)
     http_timeout: float = HTTP_TIMEOUT_SECONDS
     fts5_available: Callable[[], bool] = lambda: sqlite_fts5_available()
+    missing_native_modules: Callable[[], list[str]] = lambda: native_missing_dependencies()
 
 
 def check_python(env: DoctorEnvironment) -> CheckResult:
@@ -209,15 +211,38 @@ def check_executor_cli(env: DoctorEnvironment, executor: str = DEFAULT_EXECUTOR)
             f"(suportados: {supported_executors()})",
             "Ajuste a chave executor do lastro.toml para um executor suportado.",
         )
-    found = env.which(spec.binary)
+    if spec.external is None:
+        return check_native_runtime(env)
+    binary = spec.external.binary
+    found = env.which(binary)
     if found:
         return _ok(4, NAME_EXECUTOR_CLI, f"{spec.name}: {found}")
     return _fail(
         4,
         NAME_EXECUTOR_CLI,
-        f"{spec.name}: comando '{spec.binary}' não encontrado no PATH",
-        f"Instale o {spec.name} e confirme que o comando {spec.binary} está no PATH.",
+        f"{spec.name}: comando '{binary}' não encontrado no PATH",
+        f"Instale o {spec.name} e confirme que o comando {binary} está no PATH.",
     )
+
+
+def check_native_runtime(env: DoctorEnvironment) -> CheckResult:
+    """Extra instalado e chave presente; a validade remota só é conferida ao iniciar a run."""
+    missing = env.missing_native_modules()
+    if missing:
+        return _fail(
+            4,
+            NAME_EXECUTOR_CLI,
+            f"native: extra não instalado (faltam: {', '.join(missing)})",
+            "Instale com uv sync --extra native (ou pip install 'lastro[native]').",
+        )
+    if not env.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return _fail(
+            4,
+            NAME_EXECUTOR_CLI,
+            "native: ANTHROPIC_API_KEY ausente",
+            "Defina ANTHROPIC_API_KEY no .env ao lado do lastro.toml ou no ambiente.",
+        )
+    return _ok(4, NAME_EXECUTOR_CLI, "native: extra instalado, ANTHROPIC_API_KEY presente")
 
 
 def config_valid(loaded: LoadedConfig, profiles: Sequence[Profile]) -> CheckResult:
@@ -384,13 +409,16 @@ def check_permission_file(project_dir: Path, executor: str) -> CheckResult:
             f"executor '{executor}' não suportado nesta versão",
             "Ajuste a chave executor do lastro.toml para um executor suportado.",
         )
-    path = project_dir / spec.permission_file
+    if spec.external is None:
+        return _ok(12, NAME_PERMISSION, "native: políticas aplicadas pelo servidor MCP do Lastro")
+    permission_file = spec.external.permission_file
+    path = project_dir / permission_file
     if path.is_file():
-        return _ok(12, NAME_PERMISSION, spec.permission_file.as_posix())
+        return _ok(12, NAME_PERMISSION, permission_file.as_posix())
     return _fail(
         12,
         NAME_PERMISSION,
-        f"{spec.permission_file.as_posix()} ausente",
+        f"{permission_file.as_posix()} ausente",
         "Rode lastro init no diretório do projeto para criar a permissão do executor.",
     )
 
@@ -403,14 +431,15 @@ def check_skill_bundle(project_dir: Path, executor: str) -> CheckResult:
     except BundleError as exc:
         return _fail(13, NAME_SKILL_BUNDLE, exc.detail, fix)
     spec = get_executor(executor)
-    if spec is None:
+    if spec is None or spec.external is None:
         return _ok(13, NAME_SKILL_BUNDLE, f"sha256 {bundle.sha256[:12]}")
-    problems = instruction_problems(project_dir / spec.instruction_file)
+    instruction_file = spec.external.instruction_file
+    problems = instruction_problems(project_dir / instruction_file)
     if problems:
         return _fail(
             13,
             NAME_SKILL_BUNDLE,
             "; ".join(problems),
-            f"Aponte {spec.instruction_file.as_posix()} para skills/lastro/ em até 60 linhas.",
+            f"Aponte {instruction_file.as_posix()} para skills/lastro/ em até 60 linhas.",
         )
     return _ok(13, NAME_SKILL_BUNDLE, f"sha256 {bundle.sha256[:12]}")
