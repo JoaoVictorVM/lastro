@@ -394,3 +394,30 @@ def test_storage_check_reports_missing_fts5(tmp_path: Path) -> None:
     assert result.status is Status.FAIL
     assert "fts5_unavailable" in result.detail
     assert checks.sqlite_fts5_available() is True
+
+
+def test_source_check_requires_git_and_scanner_only_when_enabled() -> None:
+    from lastro.cli.output import Status
+    from lastro.config.source import SourceSettings
+    from lastro.doctor.checks import DoctorEnvironment, check_source
+
+    settings = SourceSettings(allow_paths=["src/**"])
+    tools = {"git": "/usr/bin/git", "gh": "/usr/bin/gh"}
+
+    def env(**overrides: object) -> DoctorEnvironment:
+        values: dict[str, object] = {
+            "which": lambda name: tools.get(name),
+            "scanner_problem": lambda: None,
+            "environ": {"SOURCE_REPO_PATH": "/repo"},
+        }
+        values.update(overrides)
+        return DoctorEnvironment(**values)  # pyright: ignore[reportArgumentType]
+
+    assert check_source(env(), settings).status == Status.OK
+    assert check_source(env(scanner_problem=lambda: "gitleaks not found"), settings).status == (
+        Status.FAIL
+    )
+    assert check_source(env(which=lambda name: None), settings).status == Status.FAIL
+    assert check_source(env(environ={}), settings).status == Status.WARN
+    no_gh = env(which=lambda name: None if name == "gh" else "/usr/bin/git")
+    assert check_source(no_gh, settings).status == Status.WARN

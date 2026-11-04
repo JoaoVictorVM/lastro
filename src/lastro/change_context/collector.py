@@ -339,7 +339,9 @@ class Collector:
             for path, reason in sorted(self.exclusions.items())
         )
         comparison_ok = not any(item.startswith("comparison unavailable") for item in self.warnings)
-        partial = self.truncated or diff_truncated or not comparison_ok or bool(exclusions)
+        # Exclusões por política são o comportamento normal; parcial é cobertura incompleta.
+        unstable = any(s.excluded in (UNSTABLE, LIMIT) for s in states.values())
+        partial = self.truncated or diff_truncated or not comparison_ok or unstable
         draft = ChangeContextDraft(
             source_state=SourceState.PARTIAL if partial else SourceState.AVAILABLE,
             comparison=mode,

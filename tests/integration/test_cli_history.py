@@ -170,8 +170,9 @@ def test_history_filters_by_issue(
 ) -> None:
     conn = sqlite3.connect(store.database_path)
     conn.execute(
-        "INSERT INTO issue_snapshots (id, project_id, repository, issue_number, content_sha256, "
-        "captured_at) VALUES ('iss_42', ?, 'org/repo', 42, ?, 'x')",
+        "INSERT INTO issue_snapshots (id, project_id, repository, issue_number, source_identity, "
+        "content_sha256, captured_at) VALUES ('iss_42', ?, 'org/repo', 42, 'github:org/repo#42', "
+        "?, 'x')",
         (history_context.require_project_id(), HASH),
     )
     conn.commit()

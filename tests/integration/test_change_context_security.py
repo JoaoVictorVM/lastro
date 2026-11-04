@@ -274,3 +274,60 @@ def test_removed_line_secret_never_reaches_any_output(
     for path in history.project_dir.rglob("*"):
         if path.is_file():
             assert secret.encode() not in path.read_bytes(), path
+
+
+def test_removed_line_secret_absent_from_cli_mcp_and_reports(
+    git_repo: GitRepo,
+    gitleaks: str,
+    history_context: ProjectContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import json
+
+    from typer.testing import CliRunner
+
+    from lastro.browser.tools import BrowserTools
+    from lastro.cli.app import app
+    from lastro.history import RunStatus
+    from lastro.reporting import ReportBuilder
+    from lastro.reporting.public import export_public
+
+    secret = aws_key()
+    git_repo.git("checkout", "-q", "main")
+    git_repo.write("src/settings.py", f'AWS_KEY = "{secret}"\nTIMEOUT = 5\n')
+    git_repo.commit("settings with key")
+    git_repo.git("checkout", "-q", "-B", "feature/email")
+    git_repo.write("src/settings.py", "TIMEOUT = 5\n")
+    git_repo.commit("remove key")
+    config = history_context.config_path
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + '\n[source]\nallow_paths = ["src/**"]\nbase_ref = "main"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SOURCE_REPO_PATH", str(git_repo.root))
+
+    cli = CliRunner().invoke(
+        app, ["--profile", "homolog", "run", "start", "--mission", "Explore", "--source"]
+    )
+    assert cli.exit_code == 0, cli.output
+    history = open_history(history_context)
+    run = history.list_runs()[0].record
+    tools = BrowserTools(history_context, history, run.id)
+    responses = [
+        asyncio.run(tools.call("mission_context", {})),
+        asyncio.run(tools.call("mission_context", {"section": "changes"})),
+    ]
+    assert EXCLUDED_SECRET in responses[1]["page"]["content"]
+    history.finish_run(run.id, RunStatus.COMPLETED)
+    ReportBuilder(history).build_final(run.id)
+    export_public(history, run.id)
+
+    outputs = cli.output + cli.stderr + json.dumps(responses, ensure_ascii=False)
+    assert secret not in outputs
+    with sqlite3.connect(history.database_path) as conn:
+        conn.execute("PRAGMA wal_checkpoint(FULL)")
+    for path in history.project_dir.rglob("*"):
+        if path.is_file():
+            assert secret.encode() not in path.read_bytes(), path

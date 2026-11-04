@@ -217,13 +217,15 @@ INVALID_ROWS = [
         (NOW,),
     ),
     (
-        "INSERT INTO issue_snapshots (id, project_id, repository, issue_number, content_sha256, "
-        "captured_at) VALUES ('iss_2', 'p', 'org/repo', 0, ?, ?)",
+        "INSERT INTO issue_snapshots (id, project_id, repository, issue_number, source_identity, "
+        "content_sha256, captured_at) VALUES ('iss_2', 'p', 'org/repo', 0, "
+        "'github:org/repo#42', ?, ?)",
         (HASH, NOW),
     ),
     (
-        "INSERT INTO issue_snapshots (id, project_id, repository, issue_number, content_sha256, "
-        "captured_at) VALUES ('iss_3', 'p', 'org/repo', 42, ?, ?)",
+        "INSERT INTO issue_snapshots (id, project_id, repository, issue_number, source_identity, "
+        "content_sha256, captured_at) VALUES ('iss_3', 'p', 'org/repo', 42, "
+        "'github:org/repo#42', ?, ?)",
         (HASH, NOW),
     ),
     (

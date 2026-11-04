@@ -15,6 +15,7 @@ from typing import Any, cast
 
 from jinja2 import BaseLoader, Environment, PackageLoader, StrictUndefined
 
+from lastro.change_context.versions import version_match
 from lastro.history import (
     NOT_EVALUATED_REASON,
     ArtifactRecord,
@@ -41,6 +42,7 @@ from lastro.history.artifacts import resolve_inside
 from lastro.history.errors import UnsafeArtifactPathError
 from lastro.reporting.models import (
     BlockView,
+    ChangeContextView,
     CreatedRecordView,
     CriterionView,
     EnvironmentView,
@@ -125,6 +127,8 @@ def data_sha256(data: ReportData) -> str:
     # Runs sem executor nativo mantêm o digest anterior; o campo só existe quando há consumo.
     if content.get("model_usage") is None:
         content.pop("model_usage", None)
+    if content.get("change_context") is None:
+        content.pop("change_context", None)
     return sha256_text(canonical(content))
 
 
@@ -144,6 +148,64 @@ def _model_usage(inputs: ReportInputs) -> ModelUsageView | None:
         confirmed_usd=format_usd(usage.confirmed_nusd),
         committed_usd=format_usd(usage.committed_nusd),
         cap_usd=format_usd(usage.cap_nusd),
+    )
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _change_context(inputs: ReportInputs) -> ChangeContextView | None:
+    """Snapshot, modo, frescor, exclusões e versões; correspondência só com prova confiável."""
+    context, snapshot, run = inputs.change_context, inputs.issue_snapshot, inputs.run
+    if context is None and snapshot is None:
+        return None
+    payload = context.payload if context is not None else {}
+    observation = inputs.version_observations[-1] if inputs.version_observations else {}
+    analyzed = run.analyzed_code_version
+    executed = run.executed_system_version
+    match = (
+        _text(observation.get("version_match"))
+        or version_match(analyzed, executed, bool(payload.get("dirty"))).value
+    )
+    issue_source = None
+    if snapshot is not None:
+        issue_source = (
+            f"{snapshot.repository}#{snapshot.issue_number}"
+            if snapshot.repository and snapshot.issue_number
+            else snapshot.source_kind
+        )
+    data = snapshot.payload if snapshot is not None else {}
+    exclusions = cast(list[dict[str, object]], payload.get("exclusions") or [])
+    files = cast(list[object], payload.get("files") or [])
+    sources = cast(list[object], payload.get("sources") or [])
+    base_ref, base_commit = _text(payload.get("base_ref")), _text(payload.get("base_commit"))
+    return ChangeContextView(
+        issue_source=issue_source,
+        issue_sha256=snapshot.content_sha256 if snapshot is not None else None,
+        issue_comments=f"{data.get('comments_included', 0)}/{data.get('comments_total', 0)}"
+        if snapshot is not None
+        else None,
+        issue_scan=_text(data.get("scan_level")),
+        source_state=context.source_state if context is not None else "disabled",
+        comparison=_text(payload.get("comparison")),
+        branch=_text(payload.get("branch")),
+        head=_text(payload.get("head")),
+        base=f"{base_ref or '-'} ({base_commit or 'unavailable'})"
+        if base_ref or base_commit
+        else None,
+        merge_base=_text(payload.get("merge_base")),
+        dirty=payload.get("dirty") is True,
+        remote_freshness=_text(payload.get("remote_freshness")) or "not_checked",
+        changed=len(files),
+        sources=len(sources),
+        exclusions=tuple(f"{item.get('path')}: {item.get('reason')}" for item in exclusions),
+        truncated=payload.get("truncated") is True or payload.get("diff_truncated") is True,
+        warnings=tuple(str(item) for item in cast(list[object], payload.get("warnings") or [])),
+        analyzed_version=analyzed or "unknown",
+        executed_version=executed or "unknown",
+        version_match=match,
+        version_method=_text(observation.get("method")) or "not observed",
     )
 
 
@@ -415,6 +477,7 @@ def project(
         limitations=tuple(limitations),
         missing_evidence=missing,
         model_usage=_model_usage(inputs),
+        change_context=_change_context(inputs),
     )
 
 
