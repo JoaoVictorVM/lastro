@@ -367,6 +367,21 @@ class MissionContext:
     content_sha256: str
     skill_bundle_sha256: str | None
     plan_status: PlanStatus
+    # Páginas de requisitos; acima de uma, a projeção inicial é parcial e o restante exige cursor.
+    pages: int = 1
+    next_cursor: str | None = None
+    change_context: "ChangeContextRecord | None" = None
+
+
+@dataclass(frozen=True)
+class MissionPage:
+    """Página estável do conteúdo congelado da run, entregue como dado não confiável."""
+
+    section: str
+    index: int
+    total: int
+    content: str
+    next_cursor: str | None
 
 
 @dataclass(frozen=True)
@@ -374,6 +389,7 @@ class PlanCriterion:
     id: str
     text: str
     source: str
+    source_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -398,6 +414,10 @@ class MissionPlan:
     revision_reason: str
     clarification_id: str | None
     created_at: str
+    # Aditivos e vazios em planos antigos: informação, hipóteses e fluxos não são critérios.
+    supporting_information: tuple[JsonObject, ...] = ()
+    hypotheses: tuple[JsonObject, ...] = ()
+    affected_flows: tuple[JsonObject, ...] = ()
 
     @property
     def blocking_gaps(self) -> tuple[PlanGap, ...]:

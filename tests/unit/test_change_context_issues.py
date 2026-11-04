@@ -12,10 +12,10 @@ from lastro.change_context.issues import (
     fetch_github_issue,
     import_markdown,
     import_text,
-    issue_requirements,
     parse_issue_url,
     read_issue_file,
 )
+from lastro.change_context.models import issue_requirements
 
 URL = "https://github.com/org/repo/issues/123"
 

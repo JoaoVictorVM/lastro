@@ -133,6 +133,24 @@ class IssueContent(_Frozen):
         return self.source_kind.value
 
 
+def issue_requirements(content: IssueContent) -> str:
+    """Projeção legível dos requisitos, estável para paginação por cursor."""
+    lines = [f"# {content.title}", ""]
+    if content.repository is not None and content.number is not None:
+        lines += [f"Source: {content.repository}#{content.number}", ""]
+    if content.labels:
+        lines += [f"Labels: {', '.join(content.labels)}", ""]
+    lines.append(content.body.strip() or "(empty body)")
+    if content.comments:
+        lines += ["", f"## Comments ({content.comments_included} of {content.comments_total})"]
+        for index, comment in enumerate(content.comments, start=1):
+            stamp = f" ({comment.created_at})" if comment.created_at else ""
+            lines += ["", f"### Comment {index}{stamp}", comment.body.strip()]
+    if content.comments_truncated:
+        lines += ["", f"[{content.comments_total - content.comments_included} comment(s) omitted]"]
+    return "\n".join(lines) + "\n"
+
+
 @dataclass(frozen=True)
 class IssueCapture:
     content: IssueContent

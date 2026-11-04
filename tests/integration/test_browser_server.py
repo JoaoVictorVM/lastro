@@ -64,7 +64,9 @@ def test_mcp_stdio_catalog_and_no_active_run(make_auth_project: Callable[..., An
             assert "objectives" in schemas["submit_mission_plan"]["properties"]
             assert "action_ids" in schemas["record_test_check"]["properties"]
             assert "why_it_matters" in schemas["ask_clarification"]["properties"]
-            assert schemas["mission_context"].get("properties", {}) == {}
+            # Argumentos aditivos e opcionais: a chamada vazia continua válida.
+            assert set(schemas["mission_context"].get("properties", {})) == {"section", "cursor"}
+            assert not schemas["mission_context"].get("required")
             assert "failure_domain" in schemas["report_finding"]["properties"]
             assert "evidence_artifact_ids" in schemas["record_criterion_result"]["properties"]
             assert schemas["stop_evidence_video"]["required"] == ["recording_id"]

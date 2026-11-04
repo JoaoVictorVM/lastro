@@ -79,8 +79,12 @@ from lastro.history.mission_plans import (
     INVALID_REFERENCE,
     answer_clarification,
     blocking_gap,
+    make_cursor,
     mission_content,
+    paginate,
+    parse_cursor,
     request_clarification,
+    requirements_text,
     resolve_actions,
     select_active_plan,
     select_clarifications,
@@ -120,6 +124,7 @@ from lastro.history.models import (
     JsonValue,
     Mission,
     MissionContext,
+    MissionPage,
     MissionPlan,
     MissionSource,
     NotificationAttempt,
@@ -867,14 +872,29 @@ class HistoryStore:
         )
 
     def mission_context(self, run_id: str) -> MissionContext:
-        """Missão durável da run; a de arquivo é lida do snapshot privado e conferida."""
+        """Missão durável da run; a de arquivo é lida do snapshot privado e conferida.
+
+        A de issue vem do snapshot congelado: acima de 10.000 caracteres, só a primeira página
+        é projetada e as demais exigem `mission_page` com o cursor devolvido.
+        """
         record = self.get_run(run_id)
         snapshot = (
             self._layout.mission_snapshot(run_id)
             if record.mission_source == MissionSource.FILE
             else None
         )
-        content, digest = mission_content(record, snapshot)
+
+        def read(conn: sqlite3.Connection) -> tuple[str, ChangeContextRecord | None]:
+            return requirements_text(conn, record, snapshot), select_context(conn, run_id)
+
+        text, context = self._database.read(read)
+        if record.mission_source == MissionSource.ISSUE:
+            digest = sha256_hex(text)
+        else:
+            text, digest = mission_content(record, snapshot)
+        pages = paginate(text)
+        content = pages[0]
+        next_cursor = make_cursor(run_id, digest, "issue", 1) if len(pages) > 1 else None
         active = self.get_active_mission_plan(run_id)
         if active is None:
             status = PlanStatus.MISSING
@@ -887,7 +907,53 @@ class HistoryStore:
             content_sha256=digest,
             skill_bundle_sha256=record.skill_bundle_version,
             plan_status=status,
+            pages=len(pages),
+            next_cursor=next_cursor,
+            change_context=context,
         )
+
+    def mission_page(self, run_id: str, section: str, cursor: str | None) -> MissionPage:
+        """Página estável dos requisitos ou do resumo de mudança, só do conteúdo congelado."""
+        record = self.get_run(run_id)
+        if section == "issue":
+            snapshot = (
+                self._layout.mission_snapshot(run_id)
+                if record.mission_source == MissionSource.FILE
+                else None
+            )
+            text = self._database.read(lambda conn: requirements_text(conn, record, snapshot))
+        else:
+            text = self._change_summary(run_id)
+        digest = sha256_hex(text)
+        pages = paginate(text)
+        index = 0 if cursor is None else parse_cursor(cursor, run_id, digest, section, len(pages))
+        following = index + 1
+        return MissionPage(
+            section=section,
+            index=index,
+            total=len(pages),
+            content=pages[index],
+            next_cursor=make_cursor(run_id, digest, section, following)
+            if following < len(pages)
+            else None,
+        )
+
+    def _change_summary(self, run_id: str) -> str:
+        """Resumo de mudança do snapshot privado, conferido pelo hash gravado no manifest."""
+        context = self.get_change_context(run_id)
+        if context is None:
+            return "No change context was collected for this run.\n"
+        expected = context.payload.get("summary_sha256")
+        if expected is None:
+            return "No source was collected for this run.\n"
+        path = resolve_inside(self.run_dir(run_id), f"{CONTEXT_DIR}/summary.md")
+        try:
+            text = path.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            raise MissionPlanError(CONTEXT_INTEGRITY, "change summary missing") from None
+        if sha256_hex(text) != expected:
+            raise MissionPlanError(CONTEXT_INTEGRITY, "change summary hash mismatch")
+        return text
 
     def submit_mission_plan(
         self,
@@ -900,7 +966,7 @@ class HistoryStore:
         if run_id in self._failed_closed:
             raise HistoryUnavailableError()
         try:
-            charter = build_charter(plan.charter, max_minutes)
+            charter = build_charter(plan.charter, max_minutes, plan.affected_flows)
         except ValueError as exc:
             raise MissionPlanError(INVALID_PLAN, str(exc)) from None
         timestamp = self._now()

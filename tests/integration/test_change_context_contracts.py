@@ -76,3 +76,62 @@ def test_source_change_after_capture_does_not_change_context(
     _, text = history.read_source_file(run.id, file_id)
     assert text == "VERSION = 'captured'\n"
     assert history.get_change_context(run.id) == context
+
+
+def test_post_deployment_context_prioritizes_changed_flows(
+    git_repo: GitRepo, gitleaks: str, history_context: ProjectContext
+) -> None:
+    import asyncio
+
+    from lastro.browser.tools import BrowserTools
+
+    git_repo.write("src/form.py", "def save(email=None):\n    return email\n")
+    git_repo.write("src/report.py", "TOTAL = 1\n")
+    settings = SourceSettings(allow_paths=["src/**"], base_ref="main")
+    draft = Collector(settings, git_repo.root, scanner=Gitleaks()).collect(
+        CollectRequest(ComparisonMode.WORKING_TREE, flow_key="cadastro")
+    )
+    history = open_history(history_context)
+    run = history.create_run(
+        history_context,
+        TextMission("Explore as mudanças recentes"),
+        skill_bundle_version="b" * 64,
+        prepared=PreparedContext(change=draft),
+    ).record
+    tools = BrowserTools(history_context, history, run.id)
+    ids = {source.relative_path: source.file_id for source in draft.sources}
+    plan: dict[str, Any] = {
+        "objectives": ["Verificar fluxos alterados"],
+        "scope": ["Cadastro e relatório"],
+        "criteria": [],
+        "gaps": [],
+        "out_of_scope": [],
+        "charter": {
+            "target": "changed flows",
+            "resources": ["demo application"],
+            "information": "regressions in changed flows",
+            "heuristics": ["crud_consistency"],
+        },
+        "hypotheses": [
+            {"text": "O formulário aceita email vazio", "source_ref": ids["src/form.py"]}
+        ],
+        "affected_flows": [
+            {"flow": "relatorio", "source_refs": [ids["src/report.py"]], "priority": 2},
+            {"flow": "cadastro", "source_refs": [ids["src/form.py"]], "priority": 1},
+        ],
+    }
+    asyncio.run(tools.call("mission_context", {}))
+    result = asyncio.run(tools.call("submit_mission_plan", plan))
+
+    assert result["charter"]["priority_flows"] == ["cadastro", "relatorio"]
+    display = result["display"]
+    assert display.index("1. cadastro") < display.index("2. relatorio") < display.index("Charter:")
+    stored = history.get_active_mission_plan(run.id)
+    assert stored is not None
+    assert [flow["flow"] for flow in stored.affected_flows] == ["relatorio", "cadastro"]
+    context = history.get_change_context(run.id)
+    assert context is not None and context.flow_key == "cadastro"
+    assert context.payload["analyzed_code_version"] == draft.head
+    unknown = dict(plan, affected_flows=[{"flow": "x", "source_refs": ["file_unknown"]}])
+    refused = asyncio.run(tools.call("submit_mission_plan", unknown))
+    assert refused["error"] == "invalid_reference"
