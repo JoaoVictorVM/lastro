@@ -283,3 +283,268 @@ class KnowledgeHarness:
 @pytest.fixture
 def knowledge(history_context_for: Callable[[str], ProjectContext]) -> KnowledgeHarness:
     return KnowledgeHarness(history_context_for)
+
+
+@dataclass
+class NativeHarness:
+    """Runs nativas com contexto e orçamento reais no histórico, sem browser nem provedor."""
+
+    context: Callable[[str], ProjectContext]
+
+    def history(self, **kwargs: Any) -> Any:
+        from lastro.history import open_history
+
+        return open_history(self.context("homolog").with_executor("native"), **kwargs)
+
+    def start(
+        self, history: Any, *, cap_nusd: int = 2_000_000_000, suite: str | None = None
+    ) -> str:
+        from lastro.history import NativeContextInput, TextMission
+
+        context = self.context("homolog").with_executor("native")
+        run = history.create_run(context, TextMission("Explore employees"))
+        history.start_native_run(
+            NativeContextInput(
+                run_id=run.record.id,
+                cap_nusd=cap_nusd,
+                suite_budget_id=suite,
+                catalog=[{"name": "observe", "description": "d", "input_schema": {}}],
+                catalog_sha256="a" * 64,
+                pricing={"models": {}},
+                pricing_sha256="b" * 64,
+                runtime_versions={"lastro": "0"},
+            )
+        )
+        return run.record.id
+
+    def reservation(self, run_id: str, amount: int, step: int = 1, attempt: int = 1) -> Any:
+        from lastro.history import ReservationInput
+
+        return ReservationInput(
+            run_id=run_id,
+            step_index=step,
+            attempt=attempt,
+            node="decide",
+            model="claude-sonnet-5-5",
+            payload_sha256="c" * 64,
+            max_output_tokens=2048,
+            reserved_nusd=amount,
+        )
+
+
+@pytest.fixture
+def native_harness(history_context_for: Callable[[str], ProjectContext]) -> NativeHarness:
+    return NativeHarness(history_context_for)
+
+
+class ScriptedModel:
+    """Provedor falso: cada geração aplica o próximo passo do roteiro sobre a requisição."""
+
+    def __init__(
+        self,
+        steps: list[Callable[[Any], list[dict[str, Any]]]],
+        *,
+        usage: Any = None,
+        counted: int = 1500,
+    ) -> None:
+        from lastro.native.pricing import Usage
+
+        self.steps = list(steps)
+        self.usage = usage if usage is not None else Usage(1000, 400, 100, 50)
+        self.counted = counted
+        self.requests: list[Any] = []
+        self.counts = 0
+
+    async def count_tokens(self, request: Any) -> int:
+        self.counts += 1
+        return self.counted
+
+    async def create(self, request: Any) -> Any:
+        from lastro.native.provider import ModelResponse
+
+        self.requests.append(request)
+        if not self.steps:
+            raise AssertionError("script exhausted")
+        step = self.steps.pop(0)
+        content = step(request)
+        stop = "tool_use" if any(block["type"] == "tool_use" for block in content) else "end_turn"
+        return ModelResponse(content, stop, self.usage, f"req_{len(self.requests)}")
+
+
+def tool_use(name: str, arguments: dict[str, Any], index: int = 0) -> list[dict[str, Any]]:
+    import uuid
+
+    return [
+        {
+            "type": "tool_use",
+            "id": f"toolu_{index}_{uuid.uuid4().hex[:8]}",
+            "name": name,
+            "input": arguments,
+        }
+    ]
+
+
+def tool_results(request: Any) -> list[dict[str, Any]]:
+    """Resultados JSON de todas as ferramentas já devolvidas ao modelo, em ordem."""
+    import json
+
+    found: list[dict[str, Any]] = []
+    for message in request.messages:
+        if message["role"] != "user" or isinstance(message["content"], str):
+            continue
+        for block in message["content"]:
+            if block.get("type") == "tool_result":
+                try:
+                    found.append(json.loads(block["content"]))
+                except ValueError:
+                    found.append({"raw": block["content"]})
+    return found
+
+
+@pytest.fixture
+def scripted() -> Any:
+    return type(
+        "Scripted",
+        (),
+        {
+            "Model": ScriptedModel,
+            "tool_use": staticmethod(tool_use),
+            "results": staticmethod(tool_results),
+        },
+    )
+
+
+UPDATE_POLICY = """
+[profiles.demo.policy]
+version = 1
+
+[[profiles.demo.policy.bindings]]
+id = "employee-update"
+entity = "employee"
+operation = "update"
+route = "/employees/{id}/edit"
+target = {role = "button", name = "Salvar"}
+form = "employee-form"
+field_values = {status = ["active"]}
+
+[profiles.demo.policy.bindings.fields]
+full_name = "full_name"
+cpf = "cpf"
+email = "email"
+phone = "phone"
+role = "role"
+hire_date = "hire_date"
+status = "status"
+
+[profiles.demo.policy.bindings.request]
+method = "POST"
+path = "/employees/{id}"
+success_status = 200
+"""
+EDITABLE = (
+    'allowed_entities = ["employee"]\neditable_fields = { employee = '
+    '["full_name", "cpf", "email", "phone", "role", "hire_date", "status"] }'
+)
+
+
+@pytest.fixture
+def make_native_demo(
+    make_auth_project: Callable[..., AuthProject],
+    demo_server: DemoServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[..., AuthProject]:
+    """Projeto demo nativo com bundle materializado e chave fictícia no ambiente."""
+    from lastro.mission import bundle_files
+
+    def make(*, policy: bool = False, native: str = "") -> AuthProject:
+        profile = demo_profile("demo", demo_server.url)
+        if policy:
+            profile = profile.replace('allowed_entities = ["employee"]', EDITABLE) + UPDATE_POLICY
+        if native:
+            profile += "\n[profiles.demo.native]\n" + native + "\n"
+        project = make_auth_project(profile)
+        text = project.config_path.read_text(encoding="utf-8")
+        project.config_path.write_text('executor = "native"\n' + text, encoding="utf-8")
+        for relative, content in bundle_files().items():
+            target = project.config_path.parent / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8", newline="\n")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-0000000000000000")
+        monkeypatch.setenv("LASTRO_DESKTOP_NOTIFICATIONS", "off")
+        return project
+
+    return make
+
+
+@pytest.fixture
+def native_demo(make_native_demo: Callable[..., AuthProject]) -> AuthProject:
+    return make_native_demo()
+
+
+@dataclass
+class NativeRun:
+    outcome: Any
+    history: Any
+    run_id: str
+    output: list[str]
+    runner: Any
+
+
+@pytest.fixture
+def run_native() -> Callable[..., NativeRun]:
+    """Executa o runner nativo real (servidor MCP por stdio) com o modelo roteirizado."""
+
+    def execute(
+        project: AuthProject,
+        model: Any,
+        lines: tuple[str | None, ...] = (),
+        *,
+        cancel_after: float | None = None,
+    ) -> NativeRun:
+        from lastro.history import TextMission, open_history
+        from lastro.native.human import HumanDecisionPort
+        from lastro.native.runner import NativeRunner, preflight
+
+        context = project.context()
+        prepared, provider = asyncio.run(preflight(context, lambda key: model))
+        history = open_history(context)
+        run_id = history.create_run(
+            context, TextMission("Explore employees"), skill_bundle_version=prepared.bundle.sha256
+        ).record.id
+        output: list[str] = []
+        answers = iter(lines)
+        human = HumanDecisionPort(
+            history=history,
+            run_id=run_id,
+            write=output.append,
+            interactive=True,
+            timezone=context.timezone,
+            read_line=lambda: next(answers, None),
+            poll_seconds=0.1,
+        )
+        runner = NativeRunner(
+            context,
+            history,
+            run_id,
+            prepared,
+            provider,
+            write=output.append,
+            interactive=True,
+            human=human,
+        )
+
+        async def main() -> Any:
+            if cancel_after is None:
+                return await runner.run()
+            task = asyncio.create_task(runner.run())
+            await asyncio.sleep(cancel_after)
+            task.cancel()
+            try:
+                return await task
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                return runner.outcome
+
+        outcome = asyncio.run(main())
+        return NativeRun(outcome, history, run_id, output, runner)
+
+    return execute

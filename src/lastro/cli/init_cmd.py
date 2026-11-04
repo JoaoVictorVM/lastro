@@ -9,7 +9,13 @@ import typer
 from lastro.cli import output
 from lastro.config.errors import ConfigError
 from lastro.config.loader import load_config
-from lastro.config.schema import PROFILE_NAME_MAX_LENGTH, is_http_url, is_valid_profile_name
+from lastro.config.schema import (
+    DEFAULT_EXECUTOR,
+    PROFILE_NAME_MAX_LENGTH,
+    is_http_url,
+    is_valid_profile_name,
+)
+from lastro.executors import get_executor, supported_executors
 from lastro.paths import ensure_writable, is_inside_git_tree, resolve_private_data_root
 from lastro.scaffold.files import (
     CONFIG_FILE,
@@ -116,6 +122,12 @@ def _report_project_id(project_dir: Path) -> None:
         output.info(f"project_id existente preservado em {CONFIG_FILE.as_posix()}")
 
 
+def _validate_executor(value: str) -> str:
+    if get_executor(value) is None:
+        raise typer.BadParameter(f"executor não suportado (suportados: {supported_executors()})")
+    return value
+
+
 def init(
     name: Annotated[
         str | None,
@@ -147,6 +159,14 @@ def init(
             callback=_option_callback(validate_tenant),
         ),
     ] = None,
+    executor: Annotated[
+        str,
+        typer.Option(
+            "--executor",
+            help=f"Executor das missões ({supported_executors()}).",
+            callback=_validate_executor,
+        ),
+    ] = DEFAULT_EXECUTOR,
 ) -> None:
     """Cria lastro.toml, .env.example, permissão e instruções do executor, bundle de skills,
     missions/ e o private data root.
@@ -163,7 +183,7 @@ def init(
         login_url=_ask(2, login_url),
         tenant_id=_ask(3, tenant),
     )
-    result = write_scaffold(project_dir, answers)
+    result = write_scaffold(project_dir, answers, executor)
 
     for relative in result.created:
         output.info(f"Criado: {relative.as_posix()}")

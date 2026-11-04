@@ -46,6 +46,15 @@ jobs:
       - name: Install locked environment
         run: uv sync --locked
 
+      # A instalação base não traz LangGraph nem o SDK Anthropic; nada fora do extra os exige.
+      - name: Tests without the native extra
+        run: >
+          uv run pytest -q -p no:cacheprovider tests/unit tests/repository
+          tests/integration/test_cli_native.py::test_base_install_does_not_import_native_extra
+
+      - name: Install the native extra
+        run: uv sync --locked --extra native
+
       # The authentication tests drive a real Chromium; Linux also needs its system libraries.
       - name: Install Playwright Chromium
         run: |

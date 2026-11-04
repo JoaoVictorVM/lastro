@@ -4,7 +4,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urljoin
+
+if TYPE_CHECKING:
+    from lastro.history.native import NativeUsage
 
 from lastro.knowledge.models import MemoryOutcome
 from lastro.oracles.models import OracleSignal
@@ -75,6 +79,11 @@ class EventType(StrEnum):
     LIMIT_HIT = "limit_hit"
     RUN_ENDED = "run_ended"
     NOTIFICATION_DEGRADED = "notification_degraded"
+    NATIVE_STARTED = "native_started"
+    MODEL_CALL_STARTED = "model_call_started"
+    MODEL_CALL_COMPLETED = "model_call_completed"
+    MODEL_CALL_FAILED = "model_call_failed"
+    AGENT_FAILURE = "agent_failure"
 
 
 # Somente o registro abre e fecha a run; consumidores não anexam esses dois tipos.
@@ -620,6 +629,8 @@ class ReportInputs:
     oracle_signals: tuple[OracleSignal, ...]
     # Resultado corrente da memória; None em runs anteriores à memória persistente.
     memory: MemoryOutcome | None = None
+    # Consumo de modelo do executor nativo; None para executores externos.
+    model_usage: "NativeUsage | None" = None
 
 
 APPROVAL_TTL_SECONDS = 900

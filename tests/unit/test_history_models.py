@@ -59,6 +59,11 @@ def test_event_and_value_enums_are_stable() -> None:
         "limit_hit",
         "run_ended",
         "notification_degraded",
+        "native_started",
+        "model_call_started",
+        "model_call_completed",
+        "model_call_failed",
+        "agent_failure",
     ]
     assert {decision.value for decision in PolicyDecision} == {
         "allow",

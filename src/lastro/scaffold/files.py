@@ -23,6 +23,22 @@ MISSIONS_MARKER = Path("missions") / ".gitkeep"
 MISSION_EXAMPLE = Path("missions") / "example.md"
 CREDENTIAL_PREFIX = "LASTRO_"
 HOOK_COMMAND = "lastro-permission-hook"
+NATIVE_ENV = (
+    "\n# Chave da API Anthropic do executor nativo. Usada só pelo processo do Lastro.\n"
+    "ANTHROPIC_API_KEY="
+)
+NATIVE_BLOCK = """
+
+# Executor nativo: modelo, limites de saída e tetos de custo em USD (texto decimal).
+# A chave fica só no .env (ANTHROPIC_API_KEY), nunca aqui.
+[profiles.${profile_name}.native]
+model = "claude-sonnet-5-5"
+max_output_tokens = 2048
+cost_cap_usd = "2.00"
+suite_cost_cap_usd = "30.00"
+context_token_limit = 64000
+# Modelo por nó, opcional: observe = "claude-haiku-5-5"
+[profiles.${profile_name}.native.node_models]"""
 REQUIRED_HOOKS = ("PreToolUse", "Notification")
 # Versões publicadas das settings do executor; cópias idênticas recebem os hooks novos no init.
 PREVIOUS_SETTINGS_SHA256 = frozenset(
@@ -85,20 +101,33 @@ def render_files(answers: InitAnswers, executor: str = DEFAULT_EXECUTOR) -> dict
         "username_env": _toml_string(username_env),
         "password_env": _toml_string(password_env),
     }
+    spec = executor_spec(executor)
+    native_block = (
+        Template(NATIVE_BLOCK).substitute(profile_name=answers.profile_name)
+        if spec.embedded
+        else ""
+    )
+    toml_values |= {"executor": _toml_string(spec.name), "native_block": native_block}
     env_values = {
         "profile_name": answers.profile_name,
         "username_env": username_env,
         "password_env": password_env,
+        "native_env": NATIVE_ENV if spec.embedded else "",
     }
-    spec = executor_spec(executor)
-    return {
+    rendered = {
         CONFIG_FILE: _template("lastro.toml.tmpl").substitute(toml_values),
         ENV_EXAMPLE_FILE: _template("env.example.tmpl").substitute(env_values),
-        spec.permission_file: _template(spec.permission_template).template,
-        spec.instruction_file: _template(spec.instruction_template).template,
         MISSIONS_MARKER: "",
         MISSION_EXAMPLE: _template("mission.md.tmpl").template,
         **bundle_files(),
+    }
+    external = spec.external
+    if external is None:
+        return rendered
+    return {
+        **rendered,
+        external.permission_file: _template(external.permission_template).template,
+        external.instruction_file: _template(external.instruction_template).template,
         Path(".mcp.json"): json.dumps(
             {
                 "mcpServers": {
@@ -203,12 +232,13 @@ def write_scaffold(
     atomicamente pela versão atual.
     """
     result = ScaffoldResult()
+    external = executor_spec(executor).external
     for relative, content in render_files(answers, executor).items():
         target = project_dir / relative
         if target.exists():
             if relative.parent == BUNDLE_DIR:
                 _managed_existing(project_dir, relative, content, result)
-            elif relative == executor_spec(executor).permission_file:
+            elif external is not None and relative == external.permission_file:
                 _managed_settings(project_dir, relative, content, result)
             else:
                 result.preserved.append(relative)
@@ -221,8 +251,8 @@ def write_scaffold(
             result.preserved.append(relative)
             continue
         result.created.append(relative)
-    instructions = executor_spec(executor).instruction_file
-    if instructions in result.preserved:
+    if external is not None and external.instruction_file in result.preserved:
+        instructions = external.instruction_file
         result.diagnostics += [
             problem + "; ajuste o arquivo para apontar para o bundle"
             for problem in instruction_problems(project_dir / instructions)

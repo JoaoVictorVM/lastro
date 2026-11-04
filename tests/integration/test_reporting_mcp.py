@@ -327,12 +327,12 @@ def test_report_failure_keeps_terminal_state(
 ) -> None:
     from jinja2 import DictLoader
 
-    from lastro.browser import tools
+    from lastro.browser import lifecycle
     from lastro.reporting.builder import ReportBuilder
 
     broken = DictLoader({"report.md.j2": "{% for x in %}", "issue.md.j2": ""})
     monkeypatch.setattr(
-        tools, "ReportBuilder", lambda history: ReportBuilder(history, loader=broken)
+        lifecycle, "ReportBuilder", lambda history: ReportBuilder(history, loader=broken)
     )
     history, run_id, runtime = started(history_context)
     call(runtime, "submit_mission_plan", PLAN)

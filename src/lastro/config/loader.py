@@ -186,6 +186,11 @@ class ProjectContext:
     def timezone(self) -> str:
         return self.config.timezone
 
+    def with_executor(self, executor: str) -> "ProjectContext":
+        """Executor efetivo só desta invocação; o lastro.toml não é alterado."""
+        config = self.config.model_copy(update={"executor": executor})
+        return ProjectContext(LoadedConfig(self.loaded.path, config), self.profile)
+
 
 def load_config_file(explicit: Path | None, cwd: Path | None = None) -> LoadedConfig:
     path = resolve_config_path(explicit, cwd)

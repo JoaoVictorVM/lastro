@@ -26,6 +26,12 @@ lastro = "lastro.cli.app:main"
 lastro-browser = "lastro.browser.server:main"
 lastro-permission-hook = "lastro.browser.permissions:main"
 
+[project.optional-dependencies]
+native = [
+    "anthropic>=2.4.0",
+    "langgraph>=1.2.19",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

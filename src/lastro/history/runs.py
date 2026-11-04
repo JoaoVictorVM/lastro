@@ -94,19 +94,41 @@ def _read_mission_file(path: Path) -> bytes:
 
 def config_snapshot(context: ProjectContext) -> JsonObject:
     """Configuração efetiva da run, sem credenciais e com os limites preservados."""
-    profile = context.profile.model_dump(mode="json", exclude={"credentials", "run_limits"})
+    profile = context.profile.model_dump(
+        mode="json", exclude={"credentials", "run_limits", "native"}
+    )
     run_limits: JsonObject = {
         key: redact_text(value) if isinstance(value, str) else value
         for key, value in context.profile.run_limits.items()
         if isinstance(value, str | int | float)
     }
-    return {
+    snapshot: JsonObject = {
         "project_id": context.require_project_id(),
         "profile": context.profile_name,
         "timezone": context.timezone,
         "executor": context.config.executor,
         "environment": redact(profile),
         "run_limits": run_limits,
+    }
+    if context.config.executor == "native":
+        snapshot["native"] = native_snapshot(context)
+    return snapshot
+
+
+def native_snapshot(context: ProjectContext) -> JsonObject:
+    """Configuração nativa efetiva e hash da tabela de preços congelada para a run."""
+    from lastro.native.pricing import document_sha256, pricing_document
+
+    settings = context.profile.native
+    # Nomes sem "token": a redação central apagaria valores de chaves com essa palavra.
+    return {
+        "model": settings.model,
+        "node_models": dict(settings.node_models),
+        "max_output": settings.max_output_tokens,
+        "context_limit": settings.context_token_limit,
+        "cost_cap_usd": settings.cost_cap_usd,
+        "suite_cost_cap_usd": settings.suite_cost_cap_usd,
+        "pricing_sha256": document_sha256(pricing_document(settings.models())),
     }
 
 

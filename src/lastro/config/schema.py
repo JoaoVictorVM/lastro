@@ -18,6 +18,7 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
+from lastro.config.native import NativeSettings
 from lastro.config.policy import BrowserPolicy, safe_path
 from lastro.config.testdata import TestDataSettings
 from lastro.oracles.ignore import OracleSettings
@@ -294,6 +295,7 @@ class Profile(BaseModel):
     policy: BrowserPolicy = Field(default_factory=BrowserPolicy)
     oracles: OracleSettings = Field(default_factory=OracleSettings)
     test_data: TestDataSettings = Field(default_factory=TestDataSettings)
+    native: NativeSettings = Field(default_factory=NativeSettings)
 
     @field_validator("denied_endpoint_patterns")
     @classmethod

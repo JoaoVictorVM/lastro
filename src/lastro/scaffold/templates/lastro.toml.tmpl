@@ -8,8 +8,8 @@ project_id = ${project_id}
 # Fuso usado para exibir horários (nome IANA). O armazenamento é sempre em UTC.
 timezone = "America/Sao_Paulo"
 
-# Executor cuja CLI o lastro doctor procura no PATH.
-executor = "claude-code"
+# Executor das missões: claude-code (CLI externa no PATH) ou native (loop próprio, extra native).
+executor = ${executor}
 
 # Pasta dos dados privados (sessões, evidências, histórico). O padrão da plataforma fica
 # fora do repositório; só descomente para usar outro local, também fora do Git.
@@ -77,7 +77,7 @@ version = 1
 auxiliary_origins = []
 bindings = []
 rules = []
-preauthorized_records = []
+preauthorized_records = []${native_block}
 
 # Registros criados pelas runs: link de detalhe e limpeza manual por entidade. A entidade
 # precisa estar em allowed_entities e ter um binding create. O Lastro nunca exclui registros.

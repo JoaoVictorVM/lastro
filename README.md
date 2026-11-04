@@ -81,7 +81,7 @@ No evaluation has been run yet, so this table intentionally shows no numbers. Ev
 |---|---|
 | Claude Code | Setup only today: `lastro init` writes its permission configuration and `lastro doctor` checks that the `claude` CLI is installed. Agent runs are planned. |
 | Codex | Planned |
-| Native LangGraph executor | Planned |
+| Native LangGraph executor | Available with the `native` extra: `lastro run start --executor native` runs the mission with Lastro's own agent loop over the same MCP tool server, with approval prompts in the terminal and a per-run cost cap. See [docs/native-executor.md](docs/native-executor.md). |
 
 ## Scripted login and tenant check
 

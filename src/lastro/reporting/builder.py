@@ -47,6 +47,7 @@ from lastro.reporting.models import (
     EvidenceView,
     FindingView,
     MissionView,
+    ModelUsageView,
     ReportData,
     ReproductionView,
     SignalView,
@@ -120,7 +121,30 @@ def report_path(kind: ReportKind, memory_revision: int) -> str:
 
 
 def data_sha256(data: ReportData) -> str:
-    return sha256_text(canonical(asdict(data)))
+    content = asdict(data)
+    # Runs sem executor nativo mantêm o digest anterior; o campo só existe quando há consumo.
+    if content.get("model_usage") is None:
+        content.pop("model_usage", None)
+    return sha256_text(canonical(content))
+
+
+def _model_usage(inputs: ReportInputs) -> ModelUsageView | None:
+    usage = inputs.model_usage
+    if usage is None:
+        return None
+    from lastro.native.pricing import format_usd
+
+    return ModelUsageView(
+        calls=usage.calls,
+        uncertain_calls=usage.uncertain_calls,
+        input_tokens=usage.total_input_tokens,
+        cache_read_tokens=usage.cache_read_tokens,
+        cache_write_tokens=usage.cache_write_tokens,
+        output_tokens=usage.output_tokens,
+        confirmed_usd=format_usd(usage.confirmed_nusd),
+        committed_usd=format_usd(usage.committed_nusd),
+        cap_usd=format_usd(usage.cap_nusd),
+    )
 
 
 def _file_present(run_dir: Path, relative: str) -> bool:
@@ -390,6 +414,7 @@ def project(
         memory_pending=memory.pending_count if memory else 0,
         limitations=tuple(limitations),
         missing_evidence=missing,
+        model_usage=_model_usage(inputs),
     )
 
 
