@@ -4,6 +4,7 @@ Nenhuma ferramenta é implementada aqui: nome, descrição e schema vêm de `lis
 execução passa por `call_tool` no mesmo subprocesso fixado à run.
 """
 
+import asyncio
 import contextlib
 import json
 import os
@@ -22,6 +23,7 @@ from lastro.history.redaction import canonical_json, sha256_hex
 
 PROVIDER_ENV_PREFIX = "ANTHROPIC_"
 CONTROL_ARGUMENTS = frozenset({"approval_proof"})
+CHILD_EXIT_TIMEOUT_SECONDS = 10.0
 
 
 class McpTransportError(RuntimeError):
@@ -105,8 +107,11 @@ class McpSessionAdapter:
         self.profile = profile
         self.run_id = run_id
         self.errlog = errlog
-        self.stack = AsyncExitStack()
         self.session: ClientSession | None = None
+        self.owner: asyncio.Task[None] | None = None
+        self.ready = asyncio.Event()
+        self.closing = asyncio.Event()
+        self.failure: BaseException | None = None
         self.catalog: list[CatalogTool] = []
         self.lost = False
 
@@ -128,11 +133,12 @@ class McpSessionAdapter:
         )
 
     async def open(self) -> list[CatalogTool]:
-        errlog = self.errlog if self.errlog is not None else sys.stderr
-        read, write = await self.stack.enter_async_context(stdio_client(self.parameters(), errlog))
-        session = await self.stack.enter_async_context(ClientSession(read, write))
-        await session.initialize()
-        self.session = session
+        """Sobe o filho numa task dona: o contexto do transporte abre e fecha na mesma task."""
+        self.owner = asyncio.create_task(self.serve())
+        await self.ready.wait()
+        session = self.session
+        if session is None:
+            raise McpTransportError("MCP server did not start") from self.failure
         tools: list[CatalogTool] = []
         cursor: str | None = None
         while True:
@@ -149,9 +155,33 @@ class McpSessionAdapter:
         self.catalog = tools
         return tools
 
+    async def serve(self) -> None:
+        errlog = self.errlog if self.errlog is not None else sys.stderr
+        try:
+            async with AsyncExitStack() as stack:
+                read, write = await stack.enter_async_context(
+                    stdio_client(self.parameters(), errlog)
+                )
+                session = await stack.enter_async_context(ClientSession(read, write))
+                await session.initialize()
+                self.session = session
+                self.ready.set()
+                await self.closing.wait()
+        except BaseException as error:
+            self.failure = error
+        finally:
+            self.session = None
+            self.ready.set()
+
     async def close(self) -> None:
-        with contextlib.suppress(Exception):
-            await self.stack.aclose()
+        """Fecha a sessão e espera o filho terminar; o transporte mata o processo no prazo."""
+        self.closing.set()
+        owner, self.owner = self.owner, None
+        if owner is not None:
+            try:
+                await asyncio.wait_for(owner, CHILD_EXIT_TIMEOUT_SECONDS)
+            except (TimeoutError, asyncio.CancelledError, Exception):
+                owner.cancel()
         self.session = None
 
     def anthropic_tools(self) -> list[dict[str, Any]]:

@@ -49,6 +49,14 @@ class ApiAuthError(Exception):
         super().__init__(API_KEY_MESSAGE)
 
 
+class ContextLimitError(Exception):
+    """Histórico acima do teto: nada é truncado nem resumido em silêncio."""
+
+    def __init__(self, counted: int, limit: int) -> None:
+        super().__init__(f"{counted} input tokens exceed the context limit of {limit}")
+        self.counted, self.limit = counted, limit
+
+
 class ApiUnavailableError(Exception):
     """Retries esgotados ou erro definitivo do provedor: a run termina como api_error."""
 
@@ -196,6 +204,33 @@ class AnthropicProvider:
         )
 
 
+def backoff(
+    attempt: int, retry_after: float | None, jitter: Callable[[float, float], float]
+) -> float:
+    base = BACKOFF_SECONDS[min(attempt - 1, len(BACKOFF_SECONDS) - 1)]
+    return max(base + jitter(0.0, MAX_JITTER_SECONDS), retry_after or 0.0)
+
+
+async def count_tokens(
+    provider: Provider,
+    request: ModelRequest,
+    *,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    jitter: Callable[[float, float], float] = random.uniform,
+) -> int:
+    """Contagem não gera nem cobra; repete com a mesma espera, sem reserva."""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            return await provider.count_tokens(request)
+        except ProviderError as error:
+            if error.kind == "auth":
+                raise ApiAuthError() from None
+            if error.kind == "rejected" or attempt == MAX_ATTEMPTS:
+                raise ApiUnavailableError(error.code) from None
+            await sleep(backoff(attempt, error.retry_after, jitter))
+    raise ApiUnavailableError("count_failed")
+
+
 @dataclass
 class GatewayStats:
     attempts: int = 0
@@ -220,25 +255,22 @@ class ModelGateway:
         self.stats = GatewayStats()
 
     def backoff(self, attempt: int, retry_after: float | None) -> float:
-        base = BACKOFF_SECONDS[min(attempt - 1, len(BACKOFF_SECONDS) - 1)]
-        delay = base + self.jitter(0.0, MAX_JITTER_SECONDS)
-        return max(delay, retry_after or 0.0)
+        return backoff(attempt, retry_after, self.jitter)
 
     async def count(self, request: ModelRequest) -> int:
-        """Contagem não gera nem cobra; repete com a mesma espera, sem reserva."""
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            try:
-                return await self.provider.count_tokens(request)
-            except ProviderError as error:
-                if error.kind == "auth":
-                    raise ApiAuthError() from None
-                if error.kind == "rejected" or attempt == MAX_ATTEMPTS:
-                    raise ApiUnavailableError(error.code) from None
-                await self.sleep(self.backoff(attempt, error.retry_after))
-        raise ApiUnavailableError("count_failed")
+        return await count_tokens(self.provider, request, sleep=self.sleep, jitter=self.jitter)
 
-    async def call(self, node: str, step_index: int, request: ModelRequest) -> ModelResponse:
+    async def call(
+        self,
+        node: str,
+        step_index: int,
+        request: ModelRequest,
+        *,
+        context_limit: int | None = None,
+    ) -> ModelResponse:
         counted = await self.count(request)
+        if context_limit is not None and counted > context_limit:
+            raise ContextLimitError(counted, context_limit)
         reserved = reservation_nusd(request.model, counted, request.max_tokens)
         digest = request.sha256()
         for attempt in range(1, MAX_ATTEMPTS + 1):
