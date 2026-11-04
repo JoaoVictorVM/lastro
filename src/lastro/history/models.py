@@ -84,6 +84,9 @@ class EventType(StrEnum):
     MODEL_CALL_COMPLETED = "model_call_completed"
     MODEL_CALL_FAILED = "model_call_failed"
     AGENT_FAILURE = "agent_failure"
+    CHANGE_CONTEXT_COLLECTED = "change_context_collected"
+    SECURITY_EVENT = "security_event"
+    VERSION_OBSERVED = "version_observed"
 
 
 # Somente o registro abre e fecha a run; consumidores não anexam esses dois tipos.
@@ -136,6 +139,49 @@ class IssueMission:
 
 
 type Mission = TextMission | FileMission | IssueMission
+
+
+@dataclass(frozen=True)
+class IssueSnapshotRecord:
+    """Snapshot imutável de uma issue importada, já sanitizado."""
+
+    id: str
+    project_id: str
+    source_kind: str
+    repository: str | None
+    issue_number: int | None
+    source_identity: str
+    content_sha256: str
+    payload: JsonObject
+    captured_at: str
+
+
+@dataclass(frozen=True)
+class SourceFileRecord:
+    id: str
+    context_id: str
+    relative_path: str
+    origin: str
+    revision_oid: str | None
+    content_sha256: str
+    size_bytes: int
+    artifact_id: str
+
+
+@dataclass(frozen=True)
+class ChangeContextRecord:
+    """Captura congelada da run: manifest sanitizado, fontes aprovadas e captura própria."""
+
+    id: str
+    run_id: str
+    issue_snapshot_id: str | None
+    source_state: str
+    flow_key: str | None
+    captured_at: str
+    content_sha256: str
+    payload: JsonObject
+    manifest_artifact_id: str | None
+    sources: tuple[SourceFileRecord, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -631,6 +677,10 @@ class ReportInputs:
     memory: MemoryOutcome | None = None
     # Consumo de modelo do executor nativo; None para executores externos.
     model_usage: "NativeUsage | None" = None
+    # Contexto de mudança e issue importada; None nas runs sem esses vínculos.
+    change_context: ChangeContextRecord | None = None
+    issue_snapshot: IssueSnapshotRecord | None = None
+    version_observations: tuple[JsonObject, ...] = ()
 
 
 APPROVAL_TTL_SECONDS = 900

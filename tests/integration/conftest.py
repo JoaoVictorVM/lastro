@@ -548,3 +548,123 @@ def run_native() -> Callable[..., NativeRun]:
         return NativeRun(outcome, history, run_id, output, runner)
 
     return execute
+
+
+def _find_gitleaks() -> str | None:
+    import shutil
+
+    found = shutil.which("gitleaks")
+    if found:
+        return found
+    cache = Path.home() / ".cache" / "pre-commit"
+    if not cache.is_dir():
+        return None
+    for name in ("gitleaks.exe", "gitleaks"):
+        for candidate in cache.glob(f"*/golangenv-*/bin/{name}"):
+            return str(candidate)
+    return None
+
+
+# Capturado antes do isolamento de HOME: o scanner real vem do PATH ou do cache do pre-commit.
+GITLEAKS = _find_gitleaks()
+
+
+@pytest.fixture
+def gitleaks(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Exige o gitleaks real; no CI a ausência é falha, localmente é skip."""
+    if GITLEAKS is None:
+        if os.environ.get("CI"):
+            pytest.fail("gitleaks não instalado no CI")
+        pytest.skip("gitleaks não instalado")
+    monkeypatch.setenv("PATH", str(Path(GITLEAKS).parent) + os.pathsep + os.environ["PATH"])
+    return GITLEAKS
+
+
+def make_issue_capture(
+    *,
+    title: str = "Permitir email opcional",
+    body: str = "Critério: salvar cadastro sem email.",
+    repository: str | None = "org/repo",
+    number: int | None = 123,
+    kind: str = "github",
+    comments: tuple[str, ...] = (),
+) -> Any:
+    from lastro.change_context import IssueCapture, IssueComment, IssueContent, ScanLevel
+
+    content = IssueContent.model_validate(
+        {
+            "source_kind": kind,
+            "repository": repository,
+            "number": number,
+            "url": f"https://github.com/{repository}/issues/{number}" if kind == "github" else None,
+            "title": title,
+            "body": body,
+            "labels": ("bug",),
+            "comments": tuple(
+                IssueComment(source_id=str(index), body=text, created_at="2026-11-04T12:00:00Z")
+                for index, text in enumerate(comments, start=1)
+            ),
+            "comments_total": len(comments),
+            "comments_included": len(comments),
+            "source_updated_at": "2026-11-04T12:00:00Z",
+        }
+    )
+    return IssueCapture(
+        content=content,
+        capture_started_at="2026-11-04T12:00:01Z",
+        capture_finished_at="2026-11-04T12:00:02Z",
+        scan_level=ScanLevel.REDACTION_ONLY,
+    )
+
+
+@dataclass(frozen=True)
+class GitRepo:
+    root: Path
+
+    def git(self, *args: str) -> str:
+        import subprocess
+
+        result = subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Lastro Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.autocrlf=false",
+                *args,
+            ],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    def write(self, relative: str, text: str) -> Path:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="\n")
+        return path
+
+    def commit(self, message: str, *paths: str) -> str:
+        self.git("add", "--", *(paths or (".",)))
+        self.git("commit", "-q", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+
+@pytest.fixture
+def git_repo(workdir: Path) -> GitRepo:
+    """Repositório Git real com main e uma branch de feature, fora do projeto Lastro."""
+    root = workdir.parent / "source-repo"
+    root.mkdir()
+    repo = GitRepo(root)
+    repo.git("init", "-q", "-b", "main")
+    repo.write("src/form.py", "def save(email):\n    return email\n")
+    repo.write("README.md", "# demo\n")
+    repo.commit("base")
+    repo.git("checkout", "-q", "-b", "feature/email")
+    return repo

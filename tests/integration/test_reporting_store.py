@@ -105,7 +105,7 @@ def test_migrate_v004_database_to_v005(tmp_path: Path, history_context: ProjectC
         )
     )
 
-    assert apply_migrations(database) == [5, 6, 7, 8]
+    assert apply_migrations(database) == [5, 6, 7, 8, 9]
 
     with database.connection() as conn:
         legacy = conn.execute("SELECT * FROM findings WHERE id = 'legacy'").fetchone()
@@ -119,7 +119,7 @@ def test_migrate_v004_database_to_v005(tmp_path: Path, history_context: ProjectC
         "report_snapshots",
     } <= tables
     fresh = Database(tmp_path / "fresh.sqlite")
-    assert apply_migrations(fresh) == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert apply_migrations(fresh) == [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 
 def test_finding_persists_fields_with_server_provenance(history_context: ProjectContext) -> None:

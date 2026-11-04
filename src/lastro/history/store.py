@@ -4,6 +4,7 @@ Nenhuma conexão SQLite nem SQL atravessa esta fronteira: entradas e saídas sã
 """
 
 import contextlib
+import dataclasses
 import os
 import secrets
 import shutil
@@ -13,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 
 from lastro import get_version
+from lastro.change_context.models import ChangeContextDraft, PreparedContext
+from lastro.change_context.versions import version_match
 from lastro.config.loader import LoadedConfig, ProjectContext
 from lastro.history import approvals, knowledge, native
 from lastro.history.artifacts import (
@@ -20,9 +23,20 @@ from lastro.history.artifacts import (
     insert_artifact,
     list_artifacts,
     parse_artifact_type,
+    resolve_inside,
     store_file,
 )
 from lastro.history.backup import BackupResult, create_backup
+from lastro.history.change_context import (
+    CONTEXT_INTEGRITY,
+    insert_context,
+    last_passed_baseline,
+    record_version,
+    select_context,
+    select_snapshot,
+    select_version_observations,
+    upsert_snapshot,
+)
 from lastro.history.created_records import (
     creation_event,
     insert_created_record,
@@ -37,6 +51,7 @@ from lastro.history.errors import (
     HistoryError,
     HistoryUnavailableError,
     InvalidEventError,
+    InvalidMissionError,
     InvalidTransitionError,
     KnowledgeError,
     MissionPlanError,
@@ -57,7 +72,7 @@ from lastro.history.knowledge_recovery import (
     load_fallback,
     mark_imported,
 )
-from lastro.history.layout import MISSION_SNAPSHOT_RELATIVE, HistoryLayout
+from lastro.history.layout import CONTEXT_DIR, MISSION_SNAPSHOT_RELATIVE, HistoryLayout
 from lastro.history.migrations import apply_migrations
 from lastro.history.mission_plans import (
     INVALID_PLAN,
@@ -82,6 +97,7 @@ from lastro.history.models import (
     ApprovalStatus,
     ArtifactRecord,
     ArtifactType,
+    ChangeContextRecord,
     Clarification,
     CleanupResult,
     CleanupStatus,
@@ -99,6 +115,7 @@ from lastro.history.models import (
     FindingDraft,
     FindingSubmission,
     HeuristicCheck,
+    IssueSnapshotRecord,
     JsonObject,
     JsonValue,
     Mission,
@@ -122,11 +139,12 @@ from lastro.history.models import (
     RunStatus,
     RunSummary,
     SnapshotStatus,
+    SourceFileRecord,
 )
 from lastro.history.oracles import record_signal, select_signals
 from lastro.history.processes import ProcessChecker, process_exists
 from lastro.history.queries import select_runs
-from lastro.history.redaction import redact_text
+from lastro.history.redaction import canonical_json, redact_text, sha256_hex
 from lastro.history.reporting import (
     check_criterion_result,
     check_finding,
@@ -199,6 +217,37 @@ def _run_exists(conn: sqlite3.Connection, run_id: str) -> bool:
     return conn.execute("SELECT 1 FROM runs WHERE id = ?", (run_id,)).fetchone() is not None
 
 
+def _run_snapshot(conn: sqlite3.Connection, run_id: str) -> IssueSnapshotRecord | None:
+    snapshot_id = select_run(conn, run_id).issue_snapshot_id
+    return select_snapshot(conn, snapshot_id) if snapshot_id is not None else None
+
+
+def _store_context_files(
+    run_dir: Path, change: ChangeContextDraft | None
+) -> tuple[StoredFile | None, dict[str, StoredFile], tuple[StoredFile, ...]]:
+    """Materializa manifest, resumo, diff e fontes aprovadas na pasta privada antes da transação."""
+    if change is None:
+        return None, {}, ()
+    stored_sources = {
+        source.file_id: store_file(
+            run_dir, f"{CONTEXT_DIR}/sources/{source.file_id}.txt", content=source.data
+        )
+        for source in change.sources
+    }
+    extras = (
+        store_file(run_dir, f"{CONTEXT_DIR}/summary.md", content=change.summary.encode("utf-8")),
+        store_file(
+            run_dir, f"{CONTEXT_DIR}/changes.diff", content=change.diff_text.encode("utf-8")
+        ),
+    )
+    manifest = store_file(
+        run_dir,
+        f"{CONTEXT_DIR}/manifest.json",
+        content=(canonical_json(change.payload()) + "\n").encode("utf-8"),
+    )
+    return manifest, stored_sources, extras
+
+
 class HistoryStore:
     """Registro de runs, event log e artifact registry de um projeto."""
 
@@ -261,13 +310,21 @@ class HistoryStore:
         skill_bundle_version: str | None = None,
         analyzed_code_version: str | None = None,
         executed_system_version: str | None = None,
+        prepared: PreparedContext | None = None,
     ) -> CreatedRun:
         """Cria e confirma a run, a missão e run_started antes de publicar o ponteiro ativo.
 
         Ao retornar, a run já é durável; só então qualquer interação com o sistema alvo pode
-        começar.
+        começar. Snapshot da issue, contexto de mudança, fontes e eventos de segurança entram na
+        mesma transação: ou tudo é confirmado, ou nada referencia a run.
         """
         validated = validate_mission(mission)
+        issue_capture = prepared.issue if prepared is not None else None
+        if issue_capture is not None and validated.source != MissionSource.ISSUE:
+            raise InvalidMissionError("issue capture requires an issue mission")
+        change = prepared.change if prepared is not None else None
+        if analyzed_code_version is None and change is not None:
+            analyzed_code_version = change.analyzed_code_version
         active = self.get_active_run()
         if active is not None:
             raise ActiveRunExistsError(active.id)
@@ -315,11 +372,53 @@ class HistoryStore:
                 },
             )
 
+            context_files = _store_context_files(run_dir, change) if prepared is not None else None
+
             def persist(conn: sqlite3.Connection) -> RunRecord:
-                insert_run(conn, record)
+                final = record
+                if prepared is not None and prepared.issue is not None:
+                    snapshot_id = upsert_snapshot(
+                        conn,
+                        self.project_id,
+                        prepared.issue,
+                        record.issue_snapshot_id or "",
+                        started_at,
+                    )
+                    final = dataclasses.replace(record, issue_snapshot_id=snapshot_id)
+                elif record.issue_snapshot_id is not None:
+                    select_snapshot(conn, record.issue_snapshot_id, self.project_id)
+                insert_run(conn, final)
                 if stored is not None:
                     insert_artifact(conn, run_id, stored, ArtifactType.SNAPSHOT, started_at)
                 insert_event(conn, run_id, started, started_at)
+                if prepared is not None and context_files is not None:
+                    manifest, sources, extras = context_files
+                    for item in extras:
+                        insert_artifact(conn, run_id, item, ArtifactType.SNAPSHOT, started_at)
+                    manifest_id = (
+                        insert_artifact(
+                            conn, run_id, manifest, ArtifactType.SNAPSHOT, started_at
+                        ).id
+                        if manifest is not None
+                        else None
+                    )
+                    artifact_ids = {
+                        file_id: insert_artifact(
+                            conn, run_id, item, ArtifactType.SNAPSHOT, started_at
+                        ).id
+                        for file_id, item in sources.items()
+                    }
+                    insert_context(
+                        conn,
+                        context_id="ctx_" + secrets.token_hex(8),
+                        run_id=run_id,
+                        issue_snapshot_id=final.issue_snapshot_id,
+                        draft=change,
+                        issue_capture=prepared.issue,
+                        manifest_artifact_id=manifest_id,
+                        source_artifacts=artifact_ids,
+                        timestamp=started_at,
+                    )
                 return select_run(conn, run_id)
 
             confirmed = self._database.write(persist)
@@ -1114,6 +1213,67 @@ class HistoryStore:
             lambda conn: select_criterion_results(conn, run_id, current_only=current_only)
         )
 
+    def get_issue_snapshot(self, snapshot_id: str) -> IssueSnapshotRecord:
+        return self._database.read(lambda conn: select_snapshot(conn, snapshot_id, self.project_id))
+
+    def get_change_context(self, run_id: str) -> ChangeContextRecord | None:
+        """Contexto imutável da run, como o consumidor pós-implantação o lê."""
+        return self._database.read(lambda conn: select_context(conn, run_id))
+
+    def read_source_file(self, run_id: str, file_id: str) -> tuple[SourceFileRecord, str]:
+        """Conteúdo aprovado e congelado por (run, file_id), conferido pelo SHA-256.
+
+        Só o snapshot privado da run é lido; ids externos, excluídos ou de outra run são negados.
+        """
+        context = self.get_change_context(run_id)
+        source = (
+            next((item for item in context.sources if item.id == file_id), None)
+            if context is not None
+            else None
+        )
+        if context is None or source is None:
+            raise MissionPlanError(INVALID_REFERENCE, "file_id is not in this run's source set")
+        artifact = next(
+            (item for item in self.list_artifacts(run_id) if item.id == source.artifact_id), None
+        )
+        if artifact is None:
+            raise MissionPlanError(CONTEXT_INTEGRITY, "source artifact missing")
+        try:
+            data = resolve_inside(self.run_dir(run_id), artifact.relative_path).read_bytes()
+        except OSError:
+            raise MissionPlanError(CONTEXT_INTEGRITY, "source artifact missing") from None
+        if sha256_hex(data) != source.content_sha256 or sha256_hex(data) != artifact.sha256:
+            raise MissionPlanError(CONTEXT_INTEGRITY, "source artifact hash mismatch")
+        return source, data.decode("utf-8")
+
+    def observe_executed_version(
+        self, run_id: str, executed: str | None, *, method: str, origin: str
+    ) -> JsonObject:
+        """Versão realmente obtida do alvo; a correspondência nunca vem de nome de branch."""
+        record = self.get_run(run_id)
+        if record.status.is_terminal:
+            raise RunNotActiveError(run_id, record.status.value)
+        context = self.get_change_context(run_id)
+        dirty = bool(context.payload.get("dirty")) if context is not None else False
+        observation: JsonObject = {
+            "analyzed_code_version": record.analyzed_code_version,
+            "executed_system_version": executed,
+            "version_match": version_match(record.analyzed_code_version, executed, dirty).value,
+            "method": method,
+            "origin": origin,
+            "observed_at": self._now(),
+        }
+        timestamp = self._now()
+        self._database.write(lambda conn: record_version(conn, run_id, observation, timestamp))
+        return observation
+
+    def last_passed_baseline(
+        self, profile: str, tenant: str, flow_key: str
+    ) -> tuple[str, str] | None:
+        return self._database.read(
+            lambda conn: last_passed_baseline(conn, self.project_id, profile, tenant, flow_key)
+        )
+
     def report_inputs(self, run_id: str) -> ReportInputs:
         """Tudo que o relatório projeta, lido numa única transação de leitura."""
 
@@ -1134,6 +1294,9 @@ class HistoryStore:
                 model_usage=native.usage(conn, run_id)
                 if native.has_context(conn, run_id)
                 else None,
+                change_context=select_context(conn, run_id),
+                issue_snapshot=_run_snapshot(conn, run_id),
+                version_observations=tuple(select_version_observations(conn, run_id)),
             )
 
         return self._database.read(read)

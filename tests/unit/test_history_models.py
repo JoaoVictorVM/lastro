@@ -64,6 +64,9 @@ def test_event_and_value_enums_are_stable() -> None:
         "model_call_completed",
         "model_call_failed",
         "agent_failure",
+        "change_context_collected",
+        "security_event",
+        "version_observed",
     ]
     assert {decision.value for decision in PolicyDecision} == {
         "allow",
@@ -111,8 +114,9 @@ def connection(tmp_path: Path) -> Callable[[], sqlite3.Connection]:
 
     conn = connect()
     conn.execute(
-        "INSERT INTO issue_snapshots (id, project_id, repository, issue_number, content_sha256, "
-        "captured_at) VALUES ('iss_1', 'p', 'org/repo', 42, ?, ?)",
+        "INSERT INTO issue_snapshots (id, project_id, repository, issue_number, source_identity, "
+        "content_sha256, captured_at) VALUES ('iss_1', 'p', 'org/repo', 42, 'github:org/repo#42', "
+        "?, ?)",
         (HASH, NOW),
     )
     conn.execute(
