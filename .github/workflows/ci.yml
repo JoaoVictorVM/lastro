@@ -46,6 +46,27 @@ jobs:
       - name: Install locked environment
         run: uv sync --locked
 
+      # O contexto de mudança usa o scanner real nos testes, nas duas plataformas.
+      - name: Install gitleaks
+        run: |
+          case "$RUNNER_OS" in
+            Linux)
+              asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+              expected="$GITLEAKS_SHA256_LINUX_X64"
+              ;;
+            Windows)
+              asset="gitleaks_${GITLEAKS_VERSION}_windows_x64.zip"
+              expected="$GITLEAKS_SHA256_WINDOWS_X64"
+              ;;
+          esac
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o "$asset" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
+          echo "${expected}  ${asset}" | sha256sum --check --strict
+          uv run --no-project python -c "import shutil, sys; shutil.unpack_archive(sys.argv[1], sys.argv[2])" \
+            "$asset" gitleaks
+          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
+
       # A instalação base não traz LangGraph nem o SDK Anthropic; nada fora do extra os exige.
       - name: Tests without the native extra
         run: >
@@ -75,26 +96,6 @@ jobs:
 
       - name: Tests with coverage (pytest)
         run: uv run pytest --cov --cov-report=term --cov-report=xml
-
-      - name: Install gitleaks
-        run: |
-          case "$RUNNER_OS" in
-            Linux)
-              asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-              expected="$GITLEAKS_SHA256_LINUX_X64"
-              ;;
-            Windows)
-              asset="gitleaks_${GITLEAKS_VERSION}_windows_x64.zip"
-              expected="$GITLEAKS_SHA256_WINDOWS_X64"
-              ;;
-          esac
-          cd "$RUNNER_TEMP"
-          curl -fsSL -o "$asset" \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
-          echo "${expected}  ${asset}" | sha256sum --check --strict
-          uv run --no-project python -c "import shutil, sys; shutil.unpack_archive(sys.argv[1], sys.argv[2])" \
-            "$asset" gitleaks
-          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
 
       - name: Secret scan (gitleaks)
         run: |

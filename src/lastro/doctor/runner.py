@@ -88,4 +88,6 @@ def run_doctor(
         results += [checks.check_version_endpoint(env, profile) for profile in profiles]
         results.append(checks.check_permission_file(project_dir, executor))
     results.append(checks.check_skill_bundle(project_dir, executor))
+    if loaded is not None and loaded.config.source.enabled:
+        results.append(checks.check_source(env, loaded.config.source))
     return results

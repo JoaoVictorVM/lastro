@@ -16,6 +16,8 @@ BUNDLE = [f"lastro/skills/{name}" for name in SKILL_FILES]
 TEMPLATES = [
     "lastro/scaffold/templates/CLAUDE.md.tmpl",
     "lastro/scaffold/templates/mission.md.tmpl",
+    # Regras confiáveis do scanner de segredos do contexto de mudança.
+    "lastro/change_context/gitleaks.toml",
 ]
 
 

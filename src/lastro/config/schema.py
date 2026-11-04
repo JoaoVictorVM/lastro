@@ -20,6 +20,7 @@ from pydantic_core import PydanticCustomError
 
 from lastro.config.native import NativeSettings
 from lastro.config.policy import BrowserPolicy, safe_path
+from lastro.config.source import SourceSettings
 from lastro.config.testdata import TestDataSettings
 from lastro.oracles.ignore import OracleSettings
 
@@ -393,6 +394,7 @@ class LastroConfig(BaseModel):
     private_data_root: str | None = None
     executor: NonEmptyText = DEFAULT_EXECUTOR
     demo: DemoSettings = Field(default_factory=DemoSettings)
+    source: SourceSettings = Field(default_factory=SourceSettings)
     profiles: dict[str, Profile]
 
     @field_validator("timezone")

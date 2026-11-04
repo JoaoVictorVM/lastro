@@ -17,6 +17,11 @@ MAX_NOTE_LENGTH = 2000
 MAX_ACTION_IDS = 20
 MAX_QUESTION_LENGTH = 1000
 MAX_OPTION_LENGTH = 500
+MAX_SUPPORTING = 30
+MAX_HYPOTHESES = 20
+MAX_AFFECTED_FLOWS = 30
+MAX_FLOW_REFS = 10
+MAX_FLOW_NAME = 200
 PLAN_SCHEMA_VERSION = 1
 
 # Ferramentas que tocam o alvo; exigem plano ativo sem lacuna bloqueante.
@@ -105,9 +110,29 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
 
+type SourceRef = Annotated[str, Field(min_length=1, max_length=64)]
+
+
 class Criterion(_Strict):
     text: Item
     source: SourceField
+    # Referência ao snapshot da issue (ou seção/comentário) da qual o critério foi extraído.
+    source_ref: SourceRef | None = None
+
+
+class SourcedItem(_Strict):
+    """Informação ou hipótese citando material aprovado da run; nunca vira critério."""
+
+    text: Item
+    source_ref: SourceRef
+
+
+class AffectedFlow(_Strict):
+    """Fluxo potencialmente afetado pela mudança: hipótese do agente, priorizada no charter."""
+
+    flow: Annotated[str, Field(max_length=MAX_FLOW_NAME), AfterValidator(_item)]
+    source_refs: Annotated[list[SourceRef], Field(min_length=1, max_length=MAX_FLOW_REFS)]
+    priority: int = Field(default=1, ge=1, le=100)
 
 
 class Gap(_Strict):
@@ -140,6 +165,24 @@ class MissionPlanInput(_Strict):
     charter: CharterInput
     revision_reason: ReasonField | None = None
     clarification_id: Annotated[str, Field(min_length=1, max_length=64)] | None = None
+    supporting_information: Annotated[list[SourcedItem], Field(max_length=MAX_SUPPORTING)] = Field(
+        default_factory=list[SourcedItem]
+    )
+    hypotheses: Annotated[list[SourcedItem], Field(max_length=MAX_HYPOTHESES)] = Field(
+        default_factory=list[SourcedItem]
+    )
+    affected_flows: Annotated[list[AffectedFlow], Field(max_length=MAX_AFFECTED_FLOWS)] = Field(
+        default_factory=list[AffectedFlow]
+    )
+
+    def references(self) -> set[str]:
+        """Toda referência citada pelo plano; o Python confere que pertencem à run."""
+        found = {item.source_ref for item in self.criteria if item.source_ref is not None}
+        found |= {item.source_ref for item in self.supporting_information}
+        found |= {item.source_ref for item in self.hypotheses}
+        for flow in self.affected_flows:
+            found |= set(flow.source_refs)
+        return found
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:

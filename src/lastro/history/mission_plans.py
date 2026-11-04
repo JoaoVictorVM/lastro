@@ -7,9 +7,16 @@ from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
+from lastro.change_context.models import IssueContent, issue_requirements
+from lastro.history.change_context import (
+    check_snapshot_integrity,
+    select_context,
+    select_snapshot,
+)
 from lastro.history.errors import MissionPlanError
 from lastro.history.events import insert_event, prepare_event
 from lastro.history.models import (
+    MAX_MISSION_TEXT_LENGTH,
     ActionReference,
     Clarification,
     ClarificationStatus,
@@ -33,6 +40,7 @@ from lastro.mission.models import (
     PLAN_SCHEMA_VERSION,
     ClarificationAnswer,
     ClarificationInput,
+    CriterionSource,
     MissionPlanInput,
     RevisionReason,
 )
@@ -42,6 +50,11 @@ INVALID_REFERENCE = "invalid_reference"
 REVISION_REQUIRES_CLARIFICATION = "revision_requires_clarification"
 MISSION_INTEGRITY = "mission_integrity"
 RUN_NOT_RUNNING = "run_not_running"
+INVALID_CURSOR = "invalid_cursor"
+CONTEXT_NOT_FULLY_READ = "context_not_fully_read"
+PAGE_CHARACTERS = MAX_MISSION_TEXT_LENGTH
+_ADDITIVE = ("supporting_information", "hypotheses", "affected_flows")
+_CAPTURE_KEYS = ("capture_started_at", "capture_finished_at", "scan_level")
 
 
 def _sha256(data: str | bytes) -> str:
@@ -68,8 +81,115 @@ def mission_content(run: RunRecord, snapshot: Path | None) -> tuple[str, str]:
     return text, _sha256(text)
 
 
+def issue_content(conn: sqlite3.Connection, run: RunRecord) -> tuple[IssueContent, str]:
+    """Snapshot congelado da run, conferido pelo hash; a origem nunca é relida."""
+    if run.issue_snapshot_id is None:
+        raise MissionPlanError(MISSION_INTEGRITY, "issue snapshot missing")
+    snapshot = select_snapshot(conn, run.issue_snapshot_id, run.project_id)
+    check_snapshot_integrity(snapshot)
+    payload = {key: value for key, value in snapshot.payload.items() if key not in _CAPTURE_KEYS}
+    return IssueContent.model_validate(payload), snapshot.id
+
+
+def requirements_text(conn: sqlite3.Connection, run: RunRecord, snapshot: Path | None) -> str:
+    if run.mission_source == MissionSource.ISSUE:
+        return issue_requirements(issue_content(conn, run)[0])
+    return mission_content(run, snapshot)[0]
+
+
+def paginate(text: str, size: int = PAGE_CHARACTERS) -> list[str]:
+    """Páginas estáveis de até `size` caracteres, cortando em quebra de linha quando possível."""
+    pages: list[str] = []
+    rest = text
+    while len(rest) > size:
+        cut = rest.rfind("\n", size // 2, size)
+        cut = cut + 1 if cut >= 0 else size
+        pages.append(rest[:cut])
+        rest = rest[cut:]
+    pages.append(rest)
+    return pages
+
+
+def _cursor_digest(run_id: str, digest: str, section: str, index: int) -> str:
+    return _sha256(f"{run_id}:{digest}:{section}:{index}")[:16]
+
+
+def make_cursor(run_id: str, digest: str, section: str, index: int) -> str:
+    return f"{section}.{index}.{_cursor_digest(run_id, digest, section, index)}"
+
+
+def parse_cursor(cursor: str, run_id: str, digest: str, section: str, total: int) -> int:
+    """Cursor opaco vinculado à run e ao conteúdo congelado; qualquer outro é inválido."""
+    parts = cursor.split(".")
+    if len(parts) != 3 or parts[0] != section or not parts[1].isdigit():
+        raise MissionPlanError(INVALID_CURSOR, "cursor does not belong to this run and section")
+    index = int(parts[1])
+    if index >= total or parts[2] != _cursor_digest(run_id, digest, section, index):
+        raise MissionPlanError(INVALID_CURSOR, "cursor does not belong to this run and section")
+    return index
+
+
+def read_pages(conn: sqlite3.Connection, run_id: str, section: str) -> set[int]:
+    rows = conn.execute(
+        "SELECT json_extract(payload_json, '$.page.index') AS page FROM events "
+        "WHERE run_id = ? AND event_type = 'policy_decision' AND tool_name = 'mission_context' "
+        "AND policy_decision = 'allow' AND json_extract(payload_json, '$.page.section') = ?",
+        (run_id, section),
+    ).fetchall()
+    return {int(row["page"]) for row in rows if row["page"] is not None}
+
+
+def _check_requirements_read(conn: sqlite3.Connection, run: RunRecord) -> None:
+    if run.mission_source != MissionSource.ISSUE:
+        return
+    total = len(paginate(issue_requirements(issue_content(conn, run)[0])))
+    if total > 1 and read_pages(conn, run.id, "issue") != set(range(total)):
+        raise MissionPlanError(
+            CONTEXT_NOT_FULLY_READ,
+            f"read all {total} requirement pages with mission_context before submitting",
+        )
+
+
+def allowed_references(conn: sqlite3.Connection, run: RunRecord) -> tuple[set[str], set[str]]:
+    """(todas as referências aprovadas da run, referências da issue)."""
+    issue_refs: set[str] = set()
+    if run.mission_source == MissionSource.ISSUE:
+        content, snapshot_id = issue_content(conn, run)
+        issue_refs = {snapshot_id, "issue"}
+        issue_refs |= {f"comment_{index}" for index in range(1, len(content.comments) + 1)}
+    refs = set(issue_refs)
+    context = select_context(conn, run.id)
+    if context is not None:
+        refs |= {context.id, "changes"}
+        refs |= {source.id for source in context.sources}
+    return refs, issue_refs
+
+
+def _check_references(conn: sqlite3.Connection, run: RunRecord, plan: MissionPlanInput) -> None:
+    refs, issue_refs = allowed_references(conn, run)
+    unknown = plan.references() - refs
+    if unknown:
+        raise MissionPlanError(
+            INVALID_REFERENCE, "source references must be approved items of this run"
+        )
+    if run.mission_source != MissionSource.ISSUE:
+        return
+    for criterion in plan.criteria:
+        if criterion.source == CriterionSource.MISSION_EXPLICIT and (
+            criterion.source_ref not in issue_refs
+        ):
+            raise MissionPlanError(
+                INVALID_REFERENCE,
+                "explicit criteria of an imported issue must cite the issue snapshot",
+            )
+
+
 def _items(value: JsonValue) -> tuple[str, ...]:
     return tuple(str(item) for item in cast(list[JsonValue], value))
+
+
+def _objects(value: JsonValue | None) -> tuple[JsonObject, ...]:
+    return tuple(cast(list[JsonObject], value or []))
 
 
 def _plan_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> MissionPlan:
@@ -81,7 +201,15 @@ def _plan_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> MissionPlan:
             "SELECT payload_json FROM criteria WHERE id = ?", (criterion_id,)
         ).fetchone()
         data = cast(JsonObject, json.loads(stored["payload_json"]))
-        criteria.append(PlanCriterion(criterion_id, str(data["text"]), str(data["source"])))
+        ref = data.get("source_ref")
+        criteria.append(
+            PlanCriterion(
+                criterion_id,
+                str(data["text"]),
+                str(data["source"]),
+                ref if isinstance(ref, str) else None,
+            )
+        )
     gaps = [
         PlanGap(str(gap["id"]), str(gap["description"]), gap["blocking"] is True)
         for gap in cast(list[JsonObject], payload["gaps"])
@@ -100,6 +228,9 @@ def _plan_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> MissionPlan:
         revision_reason=row["revision_reason"],
         clarification_id=row["clarification_id"],
         created_at=row["created_at"],
+        supporting_information=_objects(payload.get("supporting_information")),
+        hypotheses=_objects(payload.get("hypotheses")),
+        affected_flows=_objects(payload.get("affected_flows")),
     )
 
 
@@ -133,14 +264,18 @@ def _gap_id(description: str) -> str:
     return "gap_" + _sha256(description)[:12]
 
 
-def _criterion_key(text: str, source: str) -> str:
-    return _sha256(source + "\n" + text)
+def _criterion_key(text: str, source: str, ref: str | None = None) -> str:
+    # Sem referência, a chave é a mesma de antes: critérios antigos continuam deduplicados.
+    return _sha256(source + "\n" + text + (f"\n{ref}" if ref is not None else ""))
 
 
 def _content(plan: MissionPlanInput, charter: Charter) -> JsonObject:
-    criteria: list[JsonValue] = [
-        {"text": item.text, "source": item.source.value} for item in plan.criteria
-    ]
+    criteria: list[JsonValue] = []
+    for item in plan.criteria:
+        criterion: JsonObject = {"text": item.text, "source": item.source.value}
+        if item.source_ref is not None:
+            criterion["source_ref"] = item.source_ref
+        criteria.append(criterion)
     gaps: list[JsonValue] = [
         {"description": item.description, "blocking": item.blocking} for item in plan.gaps
     ]
@@ -151,7 +286,32 @@ def _content(plan: MissionPlanInput, charter: Charter) -> JsonObject:
         "gaps": gaps,
         "out_of_scope": list[JsonValue](plan.out_of_scope),
         "charter": cast(JsonObject, charter.as_json()),
+        **_additive(plan),
     }
+
+
+def _additive(plan: MissionPlanInput) -> JsonObject:
+    """Campos novos só entram no payload quando presentes, preservando hashes antigos."""
+    data: JsonObject = {}
+    if plan.supporting_information:
+        data["supporting_information"] = [
+            {"text": item.text, "source_ref": item.source_ref}
+            for item in plan.supporting_information
+        ]
+    if plan.hypotheses:
+        data["hypotheses"] = [
+            {"text": item.text, "source_ref": item.source_ref} for item in plan.hypotheses
+        ]
+    if plan.affected_flows:
+        data["affected_flows"] = [
+            {
+                "flow": item.flow,
+                "source_refs": list[JsonValue](item.source_refs),
+                "priority": item.priority,
+            }
+            for item in plan.affected_flows
+        ]
+    return data
 
 
 def _check_revision(
@@ -187,7 +347,9 @@ def _criterion_ids(
     ids: list[JsonValue] = []
     for item in cast(list[JsonObject], criteria):
         text, source = str(item["text"]), str(item["source"])
-        key = _criterion_key(text, source)
+        ref_value = item.get("source_ref")
+        ref = ref_value if isinstance(ref_value, str) else None
+        key = _criterion_key(text, source, ref)
         row = conn.execute(
             "SELECT id, payload_json FROM criteria WHERE run_id = ? "
             "AND json_extract(payload_json, '$.normalized_sha256') = ?",
@@ -195,7 +357,11 @@ def _criterion_ids(
         ).fetchone()
         if row is not None:
             stored = cast(JsonObject, json.loads(row["payload_json"]))
-            if stored.get("text") != text or stored.get("source") != source:
+            if (
+                stored.get("text") != text
+                or stored.get("source") != source
+                or stored.get("source_ref") != ref
+            ):
                 raise MissionPlanError(MISSION_INTEGRITY, "criterion hash collision")
             ids.append(row["id"])
             continue
@@ -206,6 +372,7 @@ def _criterion_ids(
             "source": source,
             "normalized_sha256": key,
             "first_plan_id": plan_id,
+            **({"source_ref": ref} if ref is not None else {}),
         }
         conn.execute(
             "INSERT INTO criteria (id, run_id, outcome, payload_json, created_at, updated_at) "
@@ -227,6 +394,8 @@ def submit_plan(
     run = select_run(conn, run_id)
     if run.status != RunStatus.RUNNING:
         raise MissionPlanError(RUN_NOT_RUNNING, f"run is {run.status.value}")
+    _check_references(conn, run, plan)
+    _check_requirements_read(conn, run)
     redacted = redact_to_json(_content(plan, charter))
     content = cast(JsonObject, redacted.value)
     existing = conn.execute(
@@ -259,6 +428,7 @@ def submit_plan(
         "gaps": gaps,
         "out_of_scope": content["out_of_scope"],
         "charter": content["charter"],
+        **{key: content[key] for key in _ADDITIVE if key in content},
     }
     conn.execute(
         "INSERT INTO mission_plans (id, run_id, revision, content_sha256, payload_json, "

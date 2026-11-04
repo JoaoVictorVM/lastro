@@ -162,6 +162,36 @@ Costs are computed from provider-reported usage and the pricing frozen for this 
 | Executed system version | {{ (report.environment.executed_system_version or "unknown") | inline }} |
 | Started | {{ report.environment.started_at }} |
 | Ended | {{ report.environment.ended_at or "not ended" }} |
+{% if report.change_context and not public %}
+{% set change = report.change_context %}
+
+## Change context
+
+- Analyzed vs. executed version: {{ change.analyzed_version | code }} (analyzed code) vs. {{ change.executed_version | code }} (executed system, {{ change.version_method | inline }}): {{ change.version_match | code }}
+{% if change.issue_source %}
+- Issue: {{ change.issue_source | inline }}, snapshot sha256 {{ change.issue_sha256 | code }}, comments {{ change.issue_comments | inline }}, scan {{ (change.issue_scan or "unknown") | inline }}
+{% endif %}
+- Source: {{ change.source_state | inline }}{% if change.comparison %}, comparison {{ change.comparison | code }}{% endif %}
+
+{% if change.head %}
+- Branch {{ (change.branch or "detached") | code }}, HEAD {{ change.head | code }}, base {{ (change.base or "unavailable") | inline }}, merge base {{ (change.merge_base or "unavailable") | code }}
+- Local changes: {{ "yes" if change.dirty else "no" }}; remote freshness {{ change.remote_freshness | code }}{% if change.remote_freshness == "not_checked" %} (local collection only; local age does not prove the remote state){% endif %}
+
+- Changed files: {{ change.changed }}; controlled source files: {{ change.sources }}
+{% endif %}
+{% if change.truncated %}
+- Partial result: limits reached; coverage is not complete.
+{% endif %}
+{% for item in change.exclusions %}
+- Excluded: {{ item | inline }}
+{% endfor %}
+{% for item in change.warnings %}
+- Warning: {{ item | inline }}
+{% endfor %}
+{% if change.version_match != "matched" %}
+- The analyzed code is not proven to be the executed system ({{ change.version_match }}).
+{% endif %}
+{% endif %}
 
 ## Criteria results
 

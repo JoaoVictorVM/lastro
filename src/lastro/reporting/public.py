@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from lastro.change_context.versions import is_full_oid
 from lastro.history import (
     HistoryStore,
     ReportConflictError,
@@ -151,12 +152,16 @@ def public_projection(data: ReportData, known: tuple[str, ...]) -> ReportData:
             if data.mission.charter_statement
             else None,
         ),
+        # Contexto de mudança é privado: corpo da issue, código, diff, caminhos e commits.
+        change_context=None,
         environment=replace(
             data.environment,
             environment_url="",
             tenant="",
+            analyzed_code_version=None,
             executed_system_version=clean(data.environment.executed_system_version)
             if data.environment.executed_system_version
+            and not is_full_oid(data.environment.executed_system_version)
             else None,
         ),
         criteria=tuple(criterion(item) for item in data.criteria),

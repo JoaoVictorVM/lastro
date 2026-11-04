@@ -331,6 +331,33 @@ class ModelUsageView:
 
 
 @dataclass(frozen=True)
+class ChangeContextView:
+    """Contexto de mudança da run, só no relatório privado; nada é relido de Git ou GitHub."""
+
+    issue_source: str | None
+    issue_sha256: str | None
+    issue_comments: str | None
+    issue_scan: str | None
+    source_state: str
+    comparison: str | None
+    branch: str | None
+    head: str | None
+    base: str | None
+    merge_base: str | None
+    dirty: bool
+    remote_freshness: str
+    changed: int
+    sources: int
+    exclusions: tuple[str, ...]
+    truncated: bool
+    warnings: tuple[str, ...]
+    analyzed_version: str
+    executed_version: str
+    version_match: str
+    version_method: str
+
+
+@dataclass(frozen=True)
 class MissionView:
     source: str
     text: str | None
@@ -387,3 +414,4 @@ class ReportData:
     limitations: tuple[str, ...]
     missing_evidence: tuple[str, ...]
     model_usage: ModelUsageView | None = None
+    change_context: ChangeContextView | None = None

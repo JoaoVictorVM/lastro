@@ -12,6 +12,7 @@ ACTIVE_RUN_FILENAME = "active-run.json"
 RUNS_DIRNAME = "runs"
 EVIDENCE_DIRNAME = "evidence"
 MISSION_SNAPSHOT_RELATIVE = "mission/source.md"
+CONTEXT_DIR = "context"
 FALLBACK_FILENAME = "fallback-events.jsonl"
 
 

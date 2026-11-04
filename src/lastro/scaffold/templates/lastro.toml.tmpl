@@ -90,3 +90,10 @@ preauthorized_records = []${native_block}
 [profiles.${profile_name}.oracles]
 ignore = []
 # ignore = [{ url_path = "/analytics/*" }, { message = "*Known noisy widget*" }]
+
+# Contexto de código opcional para `lastro run start --source`. A raiz vem da variável
+# SOURCE_REPO_PATH (.env); só caminhos na allowlist são lidos, e .env*, chaves, appsettings,
+# links e binários são sempre negados. Requer git e gitleaks.
+# [source]
+# allow_paths = ["src/**"]
+# base_ref = "origin/main"

@@ -28,6 +28,7 @@ from lastro.browser.bindings import ExpectedRequest, denied_endpoint, path_param
 from lastro.browser.network import AuxiliaryTransport
 from lastro.browser.policy import PolicyEngine
 from lastro.browser.provenance import Provenance
+from lastro.change_context.versions import parse_version_response
 from lastro.config.loader import ProjectContext
 from lastro.config.policy import safe_path
 from lastro.config.schema import is_same_origin
@@ -128,6 +129,7 @@ class BrowserSession:
         self.blocked_console: dict[tuple[Page | None, str], tuple[int, float]] = {}
         self.auth_console: dict[tuple[Page | None, str], tuple[int, float]] = {}
         self.response_tasks: set[asyncio.Task[None]] = set()
+        self.version_observed = False
         self.secrets: set[str] = {
             value
             for key in project.profile.credential_variable_names()
@@ -214,6 +216,45 @@ class BrowserSession:
         self.page = await self.context.new_page()
         if self.auth.verified_context is None:
             self.policy.locks.add("tenant")
+        await self.observe_version()
+
+    def version_url(self) -> str | None:
+        endpoint = self.project.profile.version_endpoint
+        if endpoint is None:
+            return None
+        url = urljoin(self.project.profile.target_url, endpoint)
+        return url if is_same_origin(url, self.project.profile.target_url) else None
+
+    async def observe_version(self) -> None:
+        """Versão executada pelo endpoint confiável do perfil, uma vez por sessão.
+
+        Nada que o agente escreve alimenta esta leitura; falha ou ausência fica `unknown`.
+        """
+        if self.version_observed or self.context is None:
+            return
+        self.version_observed = True
+        url = self.version_url()
+        version: str | None = None
+        if url is not None:
+            method = "profile_version_endpoint"
+        elif self.project.profile.version_endpoint is not None:
+            method = "cross_origin_refused"
+        else:
+            method = "not_configured"
+        if url is not None:
+            try:
+                response = await self.context.request.get(url, timeout=5000, max_redirects=0)
+                if response.ok:
+                    version = parse_version_response((await response.text())[:2000])
+            except Exception:
+                version = None
+        with contextlib.suppress(Exception):
+            self.history.observe_executed_version(
+                self.run_id,
+                redact_text(version) if version is not None else None,
+                method=method,
+                origin=preview(redact_text(urlsplit(url).path or "/")) if url else "none",
+            )
 
     async def rotate_context(self, *, record_video_dir: Path | None) -> Path | None:
         """Troca o contexto mantendo storage state só em memória e voltando à URL atual.

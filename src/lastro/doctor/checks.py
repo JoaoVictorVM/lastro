@@ -16,6 +16,7 @@ import httpx
 from lastro.cli.output import Status
 from lastro.config.loader import ENV_FILENAME, LoadedConfig
 from lastro.config.schema import DEFAULT_EXECUTOR, Profile
+from lastro.config.source import SourceSettings
 from lastro.executors import get_executor, supported_executors
 from lastro.mission import BundleError, instruction_problems, verify_bundle
 from lastro.native import missing_dependencies as native_missing_dependencies
@@ -39,6 +40,7 @@ NAME_TARGET = "URL alvo acessível"
 NAME_VERSION_ENDPOINT = "Version endpoint acessível"
 NAME_PERMISSION = "Permissão do executor"
 NAME_SKILL_BUNDLE = "Bundle de skills"
+NAME_SOURCE = "Contexto de código (--source)"
 
 DEPENDS_ON_CONFIG_DETAIL = "depende de configuração válida"
 DEPENDS_ON_CONFIG_FIX = "Corrija a configuração apontada no check Configuração e rode de novo."
@@ -139,6 +141,17 @@ def git_check_ignore(path: Path) -> bool | None:
     return None
 
 
+def scanner_problem() -> str | None:
+    """None quando o gitleaks responde e detecta o segredo sintético das regras confiáveis."""
+    from lastro.change_context.scanner import Gitleaks, ScannerError
+
+    try:
+        Gitleaks().ensure()
+    except ScannerError as exc:
+        return str(exc)
+    return None
+
+
 def _current_python() -> tuple[int, int, int]:
     return (sys.version_info.major, sys.version_info.minor, sys.version_info.micro)
 
@@ -157,6 +170,7 @@ class DoctorEnvironment:
     http_timeout: float = HTTP_TIMEOUT_SECONDS
     fts5_available: Callable[[], bool] = lambda: sqlite_fts5_available()
     missing_native_modules: Callable[[], list[str]] = lambda: native_missing_dependencies()
+    scanner_problem: Callable[[], str | None] = scanner_problem
 
 
 def check_python(env: DoctorEnvironment) -> CheckResult:
@@ -398,6 +412,35 @@ def check_version_endpoint(env: DoctorEnvironment, profile: Profile) -> CheckRes
     if status >= VERSION_ENDPOINT_FAILURE_STATUS:
         return _fail(11, name, f"{url}: HTTP {status}", fix)
     return _ok(11, name, f"{url}: HTTP {status}")
+
+
+def check_source(env: DoctorEnvironment, settings: SourceSettings) -> CheckResult:
+    """Só existe com [source] habilitado: Git e scanner obrigatórios, gh opcional (--issue)."""
+    if env.which("git") is None:
+        return _fail(14, NAME_SOURCE, "git não encontrado no PATH", "Instale o Git.")
+    problem = env.scanner_problem()
+    if problem is not None:
+        return _fail(
+            14,
+            NAME_SOURCE,
+            problem,
+            "Instale o gitleaks (https://github.com/gitleaks/gitleaks) ou rode sem --source.",
+        )
+    if not env.environ.get(settings.repo_path_env):
+        return _warn(
+            14,
+            NAME_SOURCE,
+            f"{settings.repo_path_env} não definida",
+            f"Defina {settings.repo_path_env} no .env com a raiz do repositório analisado.",
+        )
+    if env.which("gh") is None:
+        return _warn(
+            14,
+            NAME_SOURCE,
+            "git e gitleaks prontos; gh ausente (necessário só para --issue URL)",
+            "Instale o GitHub CLI e rode gh auth login para importar issues por URL.",
+        )
+    return _ok(14, NAME_SOURCE, "git, gitleaks e gh prontos")
 
 
 def check_permission_file(project_dir: Path, executor: str) -> CheckResult:

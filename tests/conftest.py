@@ -164,3 +164,33 @@ def clock_now() -> list[datetime]:
 @pytest.fixture
 def fake_clock(clock_now: list[datetime]) -> Callable[[], datetime]:
     return lambda: clock_now[0]
+
+
+def _find_gitleaks() -> str | None:
+    import shutil
+
+    found = shutil.which("gitleaks")
+    if found:
+        return found
+    cache = Path.home() / ".cache" / "pre-commit"
+    if not cache.is_dir():
+        return None
+    for name in ("gitleaks.exe", "gitleaks"):
+        for candidate in cache.glob(f"*/golangenv-*/bin/{name}"):
+            return str(candidate)
+    return None
+
+
+# Capturado antes do isolamento de HOME: o scanner real vem do PATH ou do cache do pre-commit.
+GITLEAKS = _find_gitleaks()
+
+
+@pytest.fixture
+def gitleaks(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Exige o gitleaks real; no CI a ausência é falha, localmente é skip."""
+    if GITLEAKS is None:
+        if os.environ.get("CI"):
+            pytest.fail("gitleaks não instalado no CI")
+        pytest.skip("gitleaks não instalado")
+    monkeypatch.setenv("PATH", str(Path(GITLEAKS).parent) + os.pathsep + os.environ["PATH"])
+    return GITLEAKS
