@@ -1,0 +1,6 @@
+# Regras confiáveis do Lastro para o contexto de mudança.
+# O repositório analisado nunca fornece configuração, baseline, ignore file ou allow inline.
+title = "lastro change context"
+
+[extend]
+useDefault = true

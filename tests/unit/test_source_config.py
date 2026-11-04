@@ -68,3 +68,17 @@ def test_unsafe_globs_are_rejected(pattern: str) -> None:
 )
 def test_refs_reject_revision_syntax(ref: str, valid: bool) -> None:
     assert is_valid_ref(ref) is valid
+
+
+def test_deny_precedes_allow() -> None:
+    from lastro.change_context.source import DENIED_PATTERN, NOT_ALLOWED, SourcePolicy
+
+    policy = SourcePolicy(("**",))
+    assert policy.classify(".env") == DENIED_PATTERN
+    assert policy.classify("config/.ENV.production") == DENIED_PATTERN
+    assert policy.classify("a/.git/config") == DENIED_PATTERN
+    assert policy.classify("src/App.py") is None
+    strict = SourcePolicy(("src/*.py",))
+    assert strict.classify("src/App.py") is None
+    assert strict.classify("SRC/App.py") == NOT_ALLOWED
+    assert strict.classify("src/sub/App.py") == NOT_ALLOWED
