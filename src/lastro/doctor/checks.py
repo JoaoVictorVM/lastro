@@ -14,6 +14,9 @@ from urllib.parse import urljoin
 import httpx
 
 from lastro.cli.output import Status
+from lastro.codex.config import SandboxRulesError, load_policy, verify_manifest
+from lastro.codex.models import MINIMUM_VERSION
+from lastro.codex.preflight import CodexPreflightError, probe_install
 from lastro.config.loader import ENV_FILENAME, LoadedConfig
 from lastro.config.schema import DEFAULT_EXECUTOR, Profile
 from lastro.config.source import SourceSettings
@@ -152,6 +155,11 @@ def scanner_problem() -> str | None:
     return None
 
 
+def codex_version() -> str:
+    """Versão validada do Codex; sem inferência e sem ler as credenciais da CLI."""
+    return probe_install().version
+
+
 def _current_python() -> tuple[int, int, int]:
     return (sys.version_info.major, sys.version_info.minor, sys.version_info.micro)
 
@@ -171,6 +179,7 @@ class DoctorEnvironment:
     fts5_available: Callable[[], bool] = lambda: sqlite_fts5_available()
     missing_native_modules: Callable[[], list[str]] = lambda: native_missing_dependencies()
     scanner_problem: Callable[[], str | None] = scanner_problem
+    codex_version: Callable[[], str] = codex_version
 
 
 def check_python(env: DoctorEnvironment) -> CheckResult:
@@ -227,6 +236,8 @@ def check_executor_cli(env: DoctorEnvironment, executor: str = DEFAULT_EXECUTOR)
         )
     if spec.external is None:
         return check_native_runtime(env)
+    if spec.name == "codex":
+        return check_codex_runtime(env)
     binary = spec.external.binary
     found = env.which(binary)
     if found:
@@ -237,6 +248,19 @@ def check_executor_cli(env: DoctorEnvironment, executor: str = DEFAULT_EXECUTOR)
         f"{spec.name}: comando '{binary}' não encontrado no PATH",
         f"Instale o {spec.name} e confirme que o comando {binary} está no PATH.",
     )
+
+
+def check_codex_runtime(env: DoctorEnvironment) -> CheckResult:
+    try:
+        version = env.codex_version()
+    except CodexPreflightError as exc:
+        return _fail(
+            4,
+            NAME_EXECUTOR_CLI,
+            f"codex: {exc}",
+            f"Instale o Codex {MINIMUM_VERSION} ou superior e rode codex login com ChatGPT.",
+        )
+    return _ok(4, NAME_EXECUTOR_CLI, f"codex {version}: login ChatGPT")
 
 
 def check_native_runtime(env: DoctorEnvironment) -> CheckResult:
@@ -455,6 +479,15 @@ def check_permission_file(project_dir: Path, executor: str) -> CheckResult:
     if spec.external is None:
         return _ok(12, NAME_PERMISSION, "native: políticas aplicadas pelo servidor MCP do Lastro")
     permission_file = spec.external.permission_file
+    if spec.name == "codex":
+        try:
+            load_policy(project_dir)
+            verify_manifest(project_dir)
+        except SandboxRulesError as exc:
+            return _fail(
+                12, NAME_PERMISSION, str(exc), "Rode lastro init --executor codex no projeto."
+            )
+        return _ok(12, NAME_PERMISSION, permission_file.as_posix())
     path = project_dir / permission_file
     if path.is_file():
         return _ok(12, NAME_PERMISSION, permission_file.as_posix())

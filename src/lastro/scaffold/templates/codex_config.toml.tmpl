@@ -1,0 +1,68 @@
+# Política do Lastro para o Codex. O launcher aplica estes valores em cada sessão e recusa
+# iniciar se o arquivo divergir; só model, model_reasoning_effort e model_verbosity são livres.
+forced_login_method = "chatgpt"
+model_provider = "openai"
+approval_policy = "never"
+default_permissions = "lastro"
+web_search = "disabled"
+notify = []
+
+[features]
+apps = false
+browser_use = false
+browser_use_external = false
+code_mode_host = false
+computer_use = false
+goals = false
+guardian_approval = false
+hooks = false
+image_generation = false
+in_app_browser = false
+memories = false
+multi_agent = false
+multi_agent_v2 = false
+plugins = false
+remote_plugin = false
+shell_snapshot = false
+shell_tool = false
+skill_mcp_dependency_install = false
+skill_search = false
+tool_suggest = false
+unified_exec = false
+view_image = false
+workspace_dependencies = false
+
+[agents]
+enabled = false
+
+[skills]
+include_instructions = false
+
+[skills.bundled]
+enabled = false
+
+[permissions.lastro.filesystem]
+":root" = "read"
+
+[permissions.lastro.filesystem.":workspace_roots"]
+"." = "read"
+".env" = "deny"
+".env.*" = "deny"
+"**/.env" = "deny"
+"**/.env.*" = "deny"
+".auth" = "deny"
+"**/.auth" = "deny"
+"evals/catalog" = "deny"
+"**/evals/catalog" = "deny"
+
+[permissions.lastro.network]
+enabled = false
+
+[mcp_servers.lastro]
+command = "lastro-browser"
+args = []
+required = true
+startup_timeout_sec = 60
+tool_timeout_sec = 600
+default_tools_approval_mode = "approve"
+enabled_tools = ${enabled_tools}

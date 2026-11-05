@@ -1,8 +1,11 @@
 import json
 from pathlib import Path
 
+import pytest
+
+from lastro.codex.config import SandboxRulesError, load_policy, verify_manifest
 from lastro.config.loader import load_config
-from lastro.mission import bundle_files
+from lastro.mission import bundle_files, instruction_problems, verify_bundle
 from lastro.scaffold.files import (
     CONFIG_FILE,
     ENV_EXAMPLE_FILE,
@@ -130,3 +133,98 @@ def test_add_project_id_is_idempotent(tmp_path: Path) -> None:
     assert add_project_id(config) is ProjectIdMigration.PRESERVED
     assert config.read_text(encoding="utf-8") == text
     assert text.index("project_id") < text.index("[profiles.homolog]")
+
+
+CODEX_FILES = (Path("AGENTS.md"), Path(".codex") / "config.toml", Path(".codex") / "lastro.json")
+
+
+def test_codex_scaffold(tmp_path: Path) -> None:
+    result = write_scaffold(tmp_path, ANSWERS, "codex")
+
+    assert result.diagnostics == []
+    for relative in CODEX_FILES:
+        assert relative in result.created
+    assert not (tmp_path / ".mcp.json").exists()
+    assert not (tmp_path / "CLAUDE.md").exists()
+    assert load_config(tmp_path / CONFIG_FILE).executor == "codex"
+    agents = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert len(agents.splitlines()) <= 60
+    assert instruction_problems(tmp_path / "AGENTS.md") == []
+    verify_bundle(tmp_path)
+    load_policy(tmp_path)
+    verify_manifest(tmp_path)
+
+
+def test_codex_init_is_idempotent(tmp_path: Path) -> None:
+    write_scaffold(tmp_path, ANSWERS, "codex")
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+    again = write_scaffold(tmp_path, ANSWERS, "codex")
+
+    assert again.created == []
+    assert again.updated == []
+    assert again.diagnostics == []
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+def test_existing_agents_preserved(tmp_path: Path) -> None:
+    custom = "# Minhas regras\nNada do bundle aqui.\n"
+    (tmp_path / "AGENTS.md").write_text(custom, encoding="utf-8")
+
+    result = write_scaffold(tmp_path, ANSWERS, "codex")
+
+    assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == custom
+    assert any("não referencia" in item for item in result.diagnostics)
+    assert not (tmp_path / ".codex" / "lastro.json").exists()
+
+
+def test_custom_agents_that_reference_the_bundle_are_accepted(tmp_path: Path) -> None:
+    write_scaffold(tmp_path, ANSWERS, "codex")
+    agents = tmp_path / "AGENTS.md"
+    agents.write_text(agents.read_text(encoding="utf-8") + "\nRegra local.\n", encoding="utf-8")
+    with pytest.raises(SandboxRulesError):
+        verify_manifest(tmp_path)
+
+    again = write_scaffold(tmp_path, ANSWERS, "codex")
+
+    assert Path(".codex") / "lastro.json" in again.updated
+    verify_manifest(tmp_path)
+
+
+def test_oversized_agents_blocks_the_manifest(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text(
+        "skills/lastro/explore.md skills/lastro/qa-heuristics.md skills/lastro/reproduce.md\n"
+        + "linha\n" * 80,
+        encoding="utf-8",
+    )
+    result = write_scaffold(tmp_path, ANSWERS, "codex")
+    assert any("excede 60 linhas" in item for item in result.diagnostics)
+    assert not (tmp_path / ".codex" / "lastro.json").exists()
+
+
+def test_permissive_existing_codex_config_is_reported(tmp_path: Path) -> None:
+    target = tmp_path / ".codex" / "config.toml"
+    target.parent.mkdir()
+    target.write_text('web_search = "live"\n', encoding="utf-8")
+
+    result = write_scaffold(tmp_path, ANSWERS, "codex")
+
+    assert target.read_text(encoding="utf-8") == 'web_search = "live"\n'
+    assert any("Codex sandbox rules are invalid" in item for item in result.diagnostics)
+
+
+def test_executor_specific_mcp_files(tmp_path: Path) -> None:
+    claude = tmp_path / "claude"
+    codex = tmp_path / "codex"
+    claude.mkdir()
+    codex.mkdir()
+    write_scaffold(claude, ANSWERS)
+    write_scaffold(codex, ANSWERS, "codex")
+
+    assert (claude / ".mcp.json").is_file()
+    assert (claude / "CLAUDE.md").is_file()
+    assert not (claude / ".codex").exists()
+    assert not (codex / ".mcp.json").exists()
+    bundle = sorted(path.name for path in (claude / "skills" / "lastro").iterdir())
+    assert bundle == sorted(path.name for path in (codex / "skills" / "lastro").iterdir())
+    assert verify_bundle(claude).sha256 == verify_bundle(codex).sha256
