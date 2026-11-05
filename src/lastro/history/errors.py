@@ -56,6 +56,10 @@ class ActiveRunExistsError(HistoryError):
         self.run_id = run_id
 
 
+class LaunchClaimError(HistoryError):
+    """A run não está mais à espera do primeiro lançamento."""
+
+
 class UnsafeArtifactPathError(HistoryError):
     pass
 

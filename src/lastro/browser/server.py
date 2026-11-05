@@ -48,6 +48,9 @@ async def serve(
     history = open_history(project)
     if run_id is None:
         run = history.get_active_run()
+        # Run do Codex só aceita o servidor fixado pelo launcher, nunca uma sessão avulsa.
+        if run is not None and run.executor_name == "codex":
+            run = None
     else:
         # A chave do provedor pertence só ao processo do executor, nunca ao browser.
         os.environ.pop("ANTHROPIC_API_KEY", None)
