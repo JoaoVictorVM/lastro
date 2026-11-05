@@ -12,6 +12,7 @@ from lastro.config.loader import ProjectContext
 from lastro.history.errors import (
     InvalidMissionError,
     InvalidTransitionError,
+    LaunchClaimError,
     RunNotFoundError,
 )
 from lastro.history.events import PreparedEvent, insert_event, prepare_event
@@ -35,6 +36,8 @@ from lastro.history.models import (
 from lastro.history.redaction import canonical_json, redact, redact_text
 
 RUN_ID_ENTROPY_BYTES = 2
+HANDOFF_BLOCK = "codex"
+HANDOFF_MARKER = "launch_pending"
 
 
 def new_run_id(now: datetime, timezone: str, entropy_hex: str) -> str:
@@ -230,6 +233,30 @@ def apply_transition(
         # Todo término passa por aqui: o resultado da memória sai na mesma transação.
         finalize_memory(conn, run_id, target, timestamp)
         insert_event(conn, run_id, run_ended_event(target, safe_reason), timestamp)
+    return select_run(conn, run_id)
+
+
+def launch_pending(record: RunRecord) -> bool:
+    """Run à espera do launcher: o dono já pode ter saído sem que isso seja um crash."""
+    block = record.config_snapshot.get(HANDOFF_BLOCK)
+    return isinstance(block, dict) and block.get(HANDOFF_MARKER) is True
+
+
+def claim_handoff(conn: sqlite3.Connection, run_id: str, owner_pid: int) -> RunRecord:
+    """Transfere o dono e retira o marcador; o restante do snapshot segue congelado."""
+    record = select_run(conn, run_id)
+    if record.status.is_terminal or not launch_pending(record):
+        raise LaunchClaimError(f"run {run_id} is not waiting for its first launch")
+    block = record.config_snapshot[HANDOFF_BLOCK]
+    assert isinstance(block, dict)
+    snapshot: JsonObject = {
+        **record.config_snapshot,
+        HANDOFF_BLOCK: {**block, HANDOFF_MARKER: False},
+    }
+    conn.execute(
+        "UPDATE runs SET owner_pid = ?, config_snapshot_json = ? WHERE id = ?",
+        (owner_pid, canonical_json(snapshot), run_id),
+    )
     return select_run(conn, run_id)
 
 

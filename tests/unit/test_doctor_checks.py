@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from lastro.cli.output import Status
+from lastro.codex.preflight import CodexPreflightError
 from lastro.config.schema import LastroConfig, Profile
 from lastro.doctor import checks
 from lastro.doctor.checks import CheckResult, DoctorEnvironment, http_status
@@ -99,7 +100,7 @@ def test_playwright_browsers_dir_by_platform(tmp_path: Path) -> None:
 def test_executor_cli_found_and_missing(doctor_env: Callable[..., DoctorEnvironment]) -> None:
     found = checks.check_executor_cli(doctor_env(), "claude-code")
     missing = checks.check_executor_cli(doctor_env(which=lambda name: None), "claude-code")
-    unsupported = checks.check_executor_cli(doctor_env(), "codex")
+    unsupported = checks.check_executor_cli(doctor_env(), "desconhecido")
 
     assert found.status is Status.OK
     assert missing.status is Status.FAIL
@@ -421,3 +422,33 @@ def test_source_check_requires_git_and_scanner_only_when_enabled() -> None:
     assert check_source(env(environ={}), settings).status == Status.WARN
     no_gh = env(which=lambda name: None if name == "gh" else "/usr/bin/git")
     assert check_source(no_gh, settings).status == Status.WARN
+
+
+def test_codex_version_diagnostic(doctor_env: Callable[..., DoctorEnvironment]) -> None:
+    def old() -> str:
+        raise CodexPreflightError("Codex CLI is too old: installed: 0.1.0; required: >=0.166.0")
+
+    result = checks.check_executor_cli(doctor_env(codex_version=old), "codex")
+    assert result.status is Status.FAIL
+    assert "installed: 0.1.0; required: >=0.166.0" in result.detail
+
+    current = checks.check_executor_cli(doctor_env(codex_version=lambda: "0.166.0"), "codex")
+    assert current.status is Status.OK
+    assert "codex 0.166.0" in current.detail
+
+
+def test_codex_missing_sandbox(tmp_path: Path) -> None:
+    result = checks.check_permission_file(tmp_path, "codex")
+    assert result.status is Status.FAIL
+    assert "Codex sandbox rules not found; run 'lastro init --executor codex'." in result.detail
+
+
+def test_codex_auth_method(doctor_env: Callable[..., DoctorEnvironment]) -> None:
+    def api_key() -> str:
+        raise CodexPreflightError("Codex is logged in with an API key. Run 'codex login'.")
+
+    result = checks.check_executor_cli(doctor_env(codex_version=api_key), "codex")
+    assert result.status is Status.FAIL
+    assert "API key" in result.detail
+    assert result.fix is not None
+    assert "codex login" in result.fix

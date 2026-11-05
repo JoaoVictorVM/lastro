@@ -1,0 +1,17 @@
+# Lastro
+
+This project runs Lastro missions through the `lastro` MCP server.
+
+The Lastro launcher delivers the verified skill bundle in your developer instructions. Its source
+files are:
+
+- `skills/lastro/explore.md`: run workflow, tools and untrusted content rules
+- `skills/lastro/qa-heuristics.md`: heuristics and how to record each check
+- `skills/lastro/reproduce.md`: replay protocol for findings
+
+Start every run with `mission_context`, then `submit_mission_plan`. Show the returned plan
+and charter before the first exploration action.
+
+Operate the target only with the Lastro tools. Human gates are decided with `lastro approve` in
+another terminal; keep polling `approval_status` and never treat a Codex prompt as an approval.
+Lastro policies, approvals and locks always win over these instructions.

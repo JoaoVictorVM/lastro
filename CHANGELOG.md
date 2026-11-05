@@ -12,6 +12,9 @@ list the intended scope and contain no shipped changes until their release date 
 
 ### Added
 
+- Codex executor: `lastro init --executor codex`, `lastro run start --executor codex` and the
+  supervised `lastro run launch`, using the Codex CLI login, the same tool server and bundle,
+  effective isolation checks on every launch and `executor_limit` interruption.
 - `lastro` CLI with `init`, `doctor`, `demo up` and `demo down`, configuration profiles in
   `lastro.toml` and a private data root outside the repository.
 - Bundled demo application with two clinics, seeded employees, ten seeded defects and two

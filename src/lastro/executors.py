@@ -11,6 +11,8 @@ class ExternalRuntime:
     permission_template: str
     instruction_file: Path
     instruction_template: str
+    # Consumidores do formato .mcp.json; o Codex descreve o servidor na própria configuração.
+    uses_mcp_json: bool = True
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,18 @@ EXECUTORS: dict[str, ExecutorSpec] = {
             instruction_file=Path("CLAUDE.md"),
             instruction_template="CLAUDE.md.tmpl",
         ),
+    ),
+    "codex": ExecutorSpec(
+        name="codex",
+        external=ExternalRuntime(
+            binary="codex",
+            permission_file=Path(".codex") / "config.toml",
+            permission_template="codex_config.toml.tmpl",
+            instruction_file=Path("AGENTS.md"),
+            instruction_template="AGENTS.md.tmpl",
+            uses_mcp_json=False,
+        ),
+        install_hint="npm install -g @openai/codex",
     ),
     "native": ExecutorSpec(
         name="native",

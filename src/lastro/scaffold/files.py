@@ -12,6 +12,7 @@ from pathlib import Path
 from string import Template
 from typing import Any, cast
 
+from lastro.codex import config as codex_config
 from lastro.config.schema import DEFAULT_EXECUTOR, is_canonical_project_id, new_project_id
 from lastro.executors import ExecutorSpec, get_executor
 from lastro.mission.bundle import BUNDLE_DIR, PREVIOUS_SHA256, bundle_files, instruction_problems
@@ -124,6 +125,12 @@ def render_files(answers: InitAnswers, executor: str = DEFAULT_EXECUTOR) -> dict
     external = spec.external
     if external is None:
         return rendered
+    if not external.uses_mcp_json:
+        return {
+            **rendered,
+            external.permission_file: codex_config.render_config(),
+            external.instruction_file: _template(external.instruction_template).template,
+        }
     return {
         **rendered,
         external.permission_file: _template(external.permission_template).template,
@@ -223,6 +230,31 @@ def _managed_settings(
         )
 
 
+def _sync_codex_manifest(project_dir: Path, result: ScaffoldResult) -> None:
+    """Manifesto reflete os arquivos em disco e só é gravado com a proteção completa."""
+    relative = codex_config.MANIFEST_FILE
+    try:
+        codex_config.load_policy(project_dir)
+    except codex_config.SandboxRulesError as error:
+        result.diagnostics.append(str(error))
+        return
+    if result.diagnostics:
+        return
+    content = codex_config.render_manifest(
+        (project_dir / codex_config.CONFIG_FILE).read_bytes(),
+        (project_dir / codex_config.INSTRUCTIONS_FILE).read_bytes(),
+    )
+    target = project_dir / relative
+    if not target.exists():
+        target.write_text(content, encoding="utf-8", newline="\n")
+        result.created.append(relative)
+    elif normalize(target.read_bytes()) == normalize(content.encode("utf-8")):
+        result.preserved.append(relative)
+    else:
+        _replace_atomically(target, content)
+        result.updated.append(relative)
+
+
 def write_scaffold(
     project_dir: Path, answers: InitAnswers, executor: str = DEFAULT_EXECUTOR
 ) -> ScaffoldResult:
@@ -257,6 +289,8 @@ def write_scaffold(
             problem + "; ajuste o arquivo para apontar para o bundle"
             for problem in instruction_problems(project_dir / instructions)
         ]
+    if external is not None and not external.uses_mcp_json:
+        _sync_codex_manifest(project_dir, result)
     return result
 
 

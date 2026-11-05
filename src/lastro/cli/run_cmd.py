@@ -28,13 +28,14 @@ from lastro.change_context.models import (
 )
 from lastro.change_context.scanner import Gitleaks, IssueSanitizer, ScannerError, available_scanner
 from lastro.cli import output
-from lastro.cli.state import HISTORY_ERROR_EXIT_CODE, get_state
+from lastro.cli.state import HISTORY_ERROR_EXIT_CODE, CliState, get_state
 from lastro.config.loader import ProjectContext
 from lastro.config.source import SourceConfigError, is_valid_ref, resolve_source_root
 from lastro.executors import get_executor, supported_executors
 from lastro.history import (
     MAX_MISSION_TEXT_LENGTH,
     CreatedRun,
+    ExecutorInfo,
     FileMission,
     HistoryError,
     HistoryStore,
@@ -166,6 +167,27 @@ def _report_context(prepared: PreparedContext) -> None:
         output.info(f"Warning: {warning}")
 
 
+def _codex_preflight(project: ProjectContext) -> Any:
+    """Antes de criar a run: instalação, login ChatGPT, regras, instruções e bundle."""
+    from lastro.codex.launcher import prepare_codex
+    from lastro.codex.preflight import CodexPreflightError
+
+    try:
+        return prepare_codex(project)
+    except CodexPreflightError as exc:
+        output.error(str(exc))
+        raise typer.Exit(code=USAGE_EXIT_CODE) from None
+
+
+def _launch_command(state: CliState, run_id: str) -> str:
+    options = ""
+    if state.config_path is not None:
+        options += f' --config "{state.config_path}"'
+    if state.profile is not None:
+        options += f" --profile {state.profile}"
+    return f"lastro{options} run launch --run-id {run_id}"
+
+
 def _bundle_hash(project_dir: Path, executor: str) -> str:
     """Hash do bundle local; sem bundle íntegro e instruções que o referenciem, não há run."""
     try:
@@ -248,7 +270,10 @@ def start(
         typer.Option("--fetch", help="Consente com git fetch do remote validado antes da coleta."),
     ] = False,
 ) -> None:
-    """Registra a run, imprime o id e a pasta e entrega o controle ao executor."""
+    """Registra a run, imprime o id e a pasta e entrega o controle ao executor.
+
+    Com o Codex, imprime o comando lastro run launch que abre a sessão supervisionada.
+    """
     sources = [mission, mission_file, issue, issue_file, issue_text]
     if sum(item is not None for item in sources) != 1:
         _usage(MISSION_SOURCE_MESSAGE)
@@ -272,6 +297,7 @@ def start(
     project = state.require_history_project()
     if executor is not None:
         project = project.with_executor(executor)
+    codex = _codex_preflight(project) if project.config.executor == "codex" else None
     bundle_hash = _bundle_hash(project.loaded.project_dir, project.config.executor)
     embedded = executor_spec(project.config.executor).embedded
     prepared = _native_preflight(project) if embedded else None
@@ -291,7 +317,12 @@ def start(
     )
     try:
         created = store.create_run(
-            project, chosen, skill_bundle_version=bundle_hash, prepared=frozen
+            project,
+            chosen,
+            ExecutorInfo(name="codex", version=codex.install.version) if codex else None,
+            skill_bundle_version=bundle_hash,
+            prepared=frozen,
+            executor_snapshot=_codex_snapshot(codex) if codex else None,
         )
     except HistoryError as exc:
         output.error(str(exc))
@@ -302,7 +333,49 @@ def start(
         _report_context(frozen)
     if prepared is not None:
         raise typer.Exit(code=_run_native(project, store, created, prepared))
+    if codex is not None:
+        output.info(f"Executor: codex {codex.install.version}")
+        output.info(f"Start Codex with: {_launch_command(state, created.record.id)}")
+        return
     handoff(created)
+
+
+def _codex_snapshot(prepared: Any) -> Any:
+    from lastro.codex.launcher import executor_snapshot
+
+    return executor_snapshot(prepared)
+
+
+@run_app.command("launch")
+def launch(
+    ctx: typer.Context,
+    run_id: Annotated[str, typer.Option("--run-id", help="Run criada por lastro run start.")],
+    headless: Annotated[
+        bool, typer.Option("--headless", help="Usa codex exec, sem interface interativa.")
+    ] = False,
+) -> None:
+    """Abre o Codex supervisionado para a run; não aceita argumentos extras para a CLI."""
+    from lastro.codex.launcher import LaunchRefused, result_json
+    from lastro.codex.launcher import launch as run_codex
+    from lastro.codex.lifecycle import summary_lines
+    from lastro.codex.models import LaunchMode
+    from lastro.codex.preflight import CodexPreflightError
+
+    state = get_state(ctx)
+    project = state.require_history_project()
+    if not headless and not (sys.stdin.isatty() and sys.stdout.isatty()):
+        _usage("Interactive Codex needs a terminal; use --headless without a TTY.")
+    store = state.open_history(project)
+    mode = LaunchMode.HEADLESS if headless else LaunchMode.INTERACTIVE
+    try:
+        result = run_codex(project, store, run_id, mode, write=output.info)
+    except (LaunchRefused, CodexPreflightError) as exc:
+        _usage(str(exc))
+    for line in summary_lines(result):
+        output.info(line)
+    if headless:
+        output.info(result_json(result))
+    raise typer.Exit(code=result.exit_code)
 
 
 def _native_preflight(project: ProjectContext) -> Any:

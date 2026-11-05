@@ -128,6 +128,23 @@ def _validate_executor(value: str) -> str:
     return value
 
 
+def _finish_codex_init(project_dir: Path, diagnostics: list[str]) -> None:
+    """Reexecução idêntica é sucesso; só conflito que impede a proteção completa falha."""
+    if diagnostics:
+        output.error("Corrija os avisos acima: o Codex não inicia com proteção incompleta.")
+        raise typer.Exit(code=1)
+    try:
+        configured = load_config(project_dir / CONFIG_FILE).executor
+    except ConfigError:
+        configured = None
+    if configured is not None and configured != "codex":
+        output.info(
+            f"Executor padrão preservado: {configured}. Use --executor codex no run start ou "
+            'altere para executor = "codex" no lastro.toml.'
+        )
+    output.info("Próximo passo: preencha .env, rode lastro doctor e confira codex login status")
+
+
 def init(
     name: Annotated[
         str | None,
@@ -209,6 +226,9 @@ def init(
             "defina private_data_root em um local fora do repositório."
         )
 
+    if executor == "codex":
+        _finish_codex_init(project_dir, result.diagnostics)
+        return
     if result.preserved:
         output.error("Arquivos existentes foram preservados; nada foi sobrescrito.")
         raise typer.Exit(code=1)

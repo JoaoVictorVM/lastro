@@ -24,6 +24,13 @@ TRUSTED_REASONS = frozenset(
         "executor_configuration",
         "user_cancelled",
         "history_unavailable",
+        "executor_limit",
+        "executor_rate_limit",
+        "executor_network",
+        "executor_error",
+        "executor_protocol_error",
+        "executor_exited",
+        "mcp_unavailable",
     }
 )
 TRUSTED_STATUSES = frozenset(

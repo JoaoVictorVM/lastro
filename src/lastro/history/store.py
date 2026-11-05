@@ -54,6 +54,7 @@ from lastro.history.errors import (
     InvalidMissionError,
     InvalidTransitionError,
     KnowledgeError,
+    LaunchClaimError,
     MissionPlanError,
     RunNotActiveError,
 )
@@ -168,9 +169,11 @@ from lastro.history.reporting import (
 from lastro.history.runs import (
     RUN_ID_ENTROPY_BYTES,
     apply_transition,
+    claim_handoff,
     clear_active_pointer,
     config_snapshot,
     insert_run,
+    launch_pending,
     new_run_id,
     publish_active_pointer,
     read_active_pointer,
@@ -214,6 +217,8 @@ type Clock = Callable[[], datetime]
 type Entropy = Callable[[int], str]
 
 MAX_RUN_ID_ATTEMPTS = 20
+LAUNCH_ABANDONED_REASON = "launch_abandoned"
+LAUNCH_PUBLISH_FAILED_REASON = "launch_publish_failed"
 # Depois de esgotar o retry, a marcação de blocked é uma última tentativa única.
 _LAST_ATTEMPT_POLICY = RetryPolicy(delays=())
 
@@ -316,6 +321,7 @@ class HistoryStore:
         analyzed_code_version: str | None = None,
         executed_system_version: str | None = None,
         prepared: PreparedContext | None = None,
+        executor_snapshot: JsonObject | None = None,
     ) -> CreatedRun:
         """Cria e confirma a run, a missão e run_started antes de publicar o ponteiro ativo.
 
@@ -333,6 +339,7 @@ class HistoryStore:
         active = self.get_active_run()
         if active is not None:
             raise ActiveRunExistsError(active.id)
+        self._abandon_pending_launches()
         executor = executor or ExecutorInfo(name=context.config.executor)
         moment = self._clock()
         run_id, run_dir = self._reserve_run_dir(moment)
@@ -364,7 +371,7 @@ class HistoryStore:
                 executor_version=executor.version,
                 lastro_version=get_version(),
                 skill_bundle_version=skill_bundle_version,
-                config_snapshot=config_snapshot(context),
+                config_snapshot={**config_snapshot(context), **(executor_snapshot or {})},
                 analyzed_code_version=analyzed_code_version,
                 executed_system_version=executed_system_version,
             )
@@ -461,6 +468,8 @@ class HistoryStore:
             return None
         if record.status.is_terminal or record.owner_pid != pointer.owner_pid:
             return None
+        if launch_pending(record):
+            return None
         if not self._process_checker(record.owner_pid):
             return None
         return record
@@ -497,6 +506,8 @@ class HistoryStore:
         def reconcile(conn: sqlite3.Connection) -> list[str]:
             lost: list[str] = []
             for record in select_non_terminal(conn):
+                if launch_pending(record):
+                    continue
                 if record.owner_pid == self.owner_pid or self._process_checker(record.owner_pid):
                     continue
                 apply_transition(
@@ -509,6 +520,36 @@ class HistoryStore:
         for run_id in lost:
             clear_active_pointer(self._layout.active_run, run_id)
         return lost
+
+    def _abandon_pending_launches(self) -> None:
+        """Handoff nunca lançado não tocou o alvo; uma nova run o encerra em vez de travar."""
+        timestamp = self._now()
+
+        def abandon(conn: sqlite3.Connection) -> list[str]:
+            pending = [record.id for record in select_non_terminal(conn) if launch_pending(record)]
+            for run_id in pending:
+                apply_transition(
+                    conn, run_id, RunStatus.INTERRUPTED, LAUNCH_ABANDONED_REASON, timestamp
+                )
+            return pending
+
+        for run_id in self._database.write(abandon):
+            clear_active_pointer(self._layout.active_run, run_id)
+
+    def claim_launch(self, run_id: str) -> RunRecord:
+        """Primeira sessão da run: dono e marcador na transação, depois o ponteiro ativo.
+
+        Sem ponteiro publicado o MCP recusaria a run; a falha encerra antes de abrir o filho.
+        """
+        owner = self.owner_pid
+        record = self._database.write(lambda conn: claim_handoff(conn, run_id, owner))
+        try:
+            publish_active_pointer(self._layout.active_run, record)
+        except OSError as error:
+            self.finish_run(run_id, RunStatus.INTERRUPTED, LAUNCH_PUBLISH_FAILED_REASON)
+            clear_active_pointer(self._layout.active_run, run_id)
+            raise LaunchClaimError(f"run {run_id} could not be published: {error}") from None
+        return record
 
     def _export_memory_fallback(self, run_id: str, error: str, timestamp: str) -> None:
         """Propostas confirmadas vão para a pasta privada; a leitura também pode falhar."""
