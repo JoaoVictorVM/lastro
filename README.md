@@ -80,7 +80,7 @@ No evaluation has been run yet, so this table intentionally shows no numbers. Ev
 | Executor | Status |
 |---|---|
 | Claude Code | Setup only today: `lastro init` writes its permission configuration and `lastro doctor` checks that the `claude` CLI is installed. Agent runs are planned. |
-| Codex | Planned |
+| Codex | Available for your own Codex CLI and ChatGPT login: `lastro run start --executor codex` creates the run and `lastro run launch` opens the supervised session over the same MCP tool server and skill bundle. Verified without inference on Windows; a full mission with real inference is not verified yet. See [docs/codex-executor.md](docs/codex-executor.md). |
 | Native LangGraph executor | Available with the `native` extra: `lastro run start --executor native` runs the mission with Lastro's own agent loop over the same MCP tool server, with approval prompts in the terminal and a per-run cost cap. See [docs/native-executor.md](docs/native-executor.md). |
 
 ## Scripted login and tenant check
@@ -137,7 +137,7 @@ Each release adds one capability and ends with a measurable result.
 | v0.2 | Human approval gates | Planned |
 | v0.3 | Evaluation and reproduction | Planned |
 | v0.4 | Persistent memory | Planned |
-| v0.5 | Codex executor | Planned |
+| v0.5 | Codex executor | In progress |
 | v0.6 | Native executor and observability | Planned |
 | v0.7 | Change context from issues and Git | Planned |
 | v0.8 | Knowledge sources | Planned |

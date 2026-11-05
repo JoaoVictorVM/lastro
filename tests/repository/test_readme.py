@@ -162,7 +162,7 @@ def test_supported_executors_mark_planned_ones() -> None:
     text = section("## Supported executors")
 
     assert "Claude Code" in text
-    assert "| Codex | Planned |" in text
+    assert "| Codex | Available" in text
 
 
 @pytest.mark.parametrize(
