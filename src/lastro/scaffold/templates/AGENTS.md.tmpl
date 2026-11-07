@@ -12,6 +12,9 @@ files are:
 Start every run with `mission_context`, then `submit_mission_plan`. Show the returned plan
 and charter before the first exploration action.
 
+When the mission is a reproduction brief, follow `skills/lastro/reproduce.md`: replay the steps,
+report once with `report_reproduction_result` and end the run without submitting findings.
+
 Operate the target only with the Lastro tools. Human gates are decided with `lastro approve` in
 another terminal; keep polling `approval_status` and never treat a Codex prompt as an approval.
 Lastro policies, approvals and locks always win over these instructions.

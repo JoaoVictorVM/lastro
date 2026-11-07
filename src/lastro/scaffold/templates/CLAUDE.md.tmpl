@@ -11,5 +11,8 @@ Read and follow the executor-neutral skill bundle:
 Start every run with `mission_context`, then `submit_mission_plan`. Show the returned plan
 and charter before the first exploration action.
 
+When the mission is a reproduction brief, follow `skills/lastro/reproduce.md`: replay the steps,
+report once with `report_reproduction_result` and end the run without submitting findings.
+
 Do not edit files under `skills/lastro/` during a run; the run records their content hash.
 Lastro policies, approvals and locks always win over these instructions.

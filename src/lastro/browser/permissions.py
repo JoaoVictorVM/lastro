@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from lastro.approvals.gate import PromptAdapter
-from lastro.browser.tools import EFFECT_TOOLS, TOOLS
+from lastro.browser.tools import EFFECT_TOOLS, catalog
 
 PREFIX = "mcp__lastro__"
-CATALOG = frozenset(PREFIX + tool for tool in TOOLS)
+# O servidor só publica a tool de reprodução nas runs filhas; o hook aceita o catálogo completo.
+CATALOG = frozenset(PREFIX + tool for tool in catalog(reproduction=True))
 PROOF_FIELD = "approval_proof"
 RESERVED_REASON = "approval_proof is reserved to the executor adapter."
 

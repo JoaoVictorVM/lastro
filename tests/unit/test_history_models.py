@@ -71,6 +71,9 @@ def test_event_and_value_enums_are_stable() -> None:
         "cancellation_requested",
         "write_reconciled",
         "run_resumed",
+        "reproduction_started",
+        "reproduction_attempt_finished",
+        "reproduction_verdict",
     ]
     assert {decision.value for decision in PolicyDecision} == {
         "allow",

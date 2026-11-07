@@ -17,8 +17,8 @@ from lastro.browser.tools import (
     KNOWLEDGE_MODELS,
     NO_ACTIVE_RUN,
     NO_RUN,
-    TOOLS,
     BrowserTools,
+    catalog,
     input_schema,
 )
 from lastro.config.loader import ProjectContext, load_project
@@ -68,7 +68,7 @@ async def serve(
                 description="Run-scoped Lastro tool: " + name,
                 inputSchema=input_schema(name),
             )
-            for name in TOOLS
+            for name in catalog(runtime is not None and runtime.reproduction)
         ]
 
     @server.call_tool(validate_input=False)
