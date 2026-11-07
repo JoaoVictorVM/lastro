@@ -1,9 +1,13 @@
 """Finalização comum no browser owner: término normal do agente e encerramento confiável."""
 
+import asyncio
 import contextlib
+import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from lastro.history import RunStatus
+from lastro.execution.models import FINALIZE_SECONDS, USER_CANCELLED
+from lastro.history import HistoryError, RunStatus
 from lastro.reporting.builder import ReportBuilder
 
 if TYPE_CHECKING:
@@ -46,45 +50,110 @@ TRUSTED_STATUSES = frozenset(
 PARTIAL_STATUSES = frozenset({RunStatus.INTERRUPTED, RunStatus.CANCELLED, RunStatus.LIMIT_REACHED})
 
 
+async def _bounded(awaitable: Any, until: float, monotonic: Callable[[], float]) -> bool:
+    """Espera limitada ao deadline absoluto; esgotado, a tarefa local é cancelada."""
+    task = asyncio.ensure_future(awaitable)
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=max(0.0, until - monotonic()))
+    except TimeoutError:
+        task.cancel()
+        with contextlib.suppress(BaseException):
+            await task
+        return False
+    return True
+
+
+async def _close_resources(
+    runtime: "BrowserTools", drain_until: float, monotonic: Callable[[], float]
+) -> str | None:
+    """Respostas e leituras em andamento terminam até o fim da drenagem; depois, fecha tudo."""
+    capture_error: str | None = None
+    try:
+        if not await _bounded(runtime.video.close(), drain_until, monotonic):
+            capture_error = "evidence video did not close before the drain deadline"
+    except Exception as error:
+        capture_error = runtime.session.sanitize(str(error))
+    session = runtime.session
+    if not await _bounded(session.close(), drain_until, monotonic):
+        for task in tuple(session.response_tasks):
+            task.cancel()
+        with contextlib.suppress(Exception):
+            if session.browser is not None:
+                await asyncio.wait_for(session.browser.close(), timeout=2.0)
+        with contextlib.suppress(Exception):
+            if session.playwright is not None:
+                await asyncio.wait_for(session.playwright.stop(), timeout=2.0)
+        session.context = session.page = session.browser = None
+    return capture_error
+
+
+def withdraw_approvals(runtime: "BrowserTools", status: RunStatus, skip_reason: str) -> None:
+    """Cancelamento retira pedidos e aprovações não consumidas; a decisão humana permanece."""
+    with contextlib.suppress(Exception):
+        if status == RunStatus.CANCELLED and skip_reason == USER_CANCELLED:
+            runtime.approvals.withdraw("cancelled")
+        else:
+            runtime.approvals.skip_pending(skip_reason)
+
+
 async def finalize(
-    runtime: "BrowserTools", status: RunStatus, reason: str, *, skip_reason: str
+    runtime: "BrowserTools",
+    status: RunStatus,
+    reason: str,
+    *,
+    skip_reason: str,
+    drain_until: float | None = None,
+    final_until: float | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     """Fecha a admissão, drena captura e browser, sela critérios, termina e gera o relatório.
 
     Uma run já terminal por outro processo não é reaberta: o estado existente é respeitado.
+    Com deadline, drenagem e persistência compartilham o mesmo prazo absoluto.
     """
     runtime.session.policy.locks.add("run_ended")
-    with contextlib.suppress(Exception):
-        runtime.approvals.skip_pending(skip_reason)
+    start = monotonic()
+    final_until = final_until if final_until is not None else start + FINALIZE_SECONDS * 4
+    drain_until = drain_until if drain_until is not None else final_until
+    withdraw_approvals(runtime, status, skip_reason)
     runtime.approvals.close()
-    capture_error: str | None = None
-    try:
-        await runtime.video.close()
-    except Exception as error:
-        capture_error = runtime.session.sanitize(str(error))
-    finally:
-        await runtime.session.close()
-    record = runtime.history.get_run(runtime.run_id)
+    capture_error = await _close_resources(runtime, drain_until, monotonic)
+    # Persistência com espera de lock limitada ao tempo restante, sem mudar a política comum.
+    history = runtime.history.with_retry_budget(max(0.5, final_until - monotonic()))
+    with contextlib.suppress(HistoryError):
+        history.mark_unknown_writes(runtime.run_id)
+    record = history.get_run(runtime.run_id)
     already_ended = record.status.is_terminal
     if not already_ended:
-        runtime.history.seal_criterion_results(runtime.run_id)
-        record = runtime.history.finish_run(runtime.run_id, status, reason)
+        with contextlib.suppress(HistoryError):
+            history.seal_criterion_results(runtime.run_id)
+        record = history.finish_run(runtime.run_id, status, reason)
     result: dict[str, Any] = {"status": record.status.value}
     if already_ended:
         result["already_ended"] = True
         result["status_reason"] = record.status_reason
     if capture_error is not None:
         result["capture_error"] = capture_error
-    memory = runtime.history.memory_outcome(runtime.run_id)
+    memory = history.memory_outcome(runtime.run_id)
     if memory is not None:
         result.update(memory_outcome=memory.outcome.value, memory_pending=memory.pending_count)
     # O relatório fica fora da transação terminal: falhar aqui nunca reabre nem muda a run.
-    builder = ReportBuilder(runtime.history)
+    builder = ReportBuilder(history)
+    partial = record.status in PARTIAL_STATUSES
+    terminal_reason = record.status_reason or reason
+
+    def build() -> Any:
+        if partial:
+            return builder.build_partial(runtime.run_id, terminal_reason)
+        return builder.build_final(runtime.run_id)
+
     try:
-        if record.status in PARTIAL_STATUSES:
-            report = builder.build_partial(runtime.run_id, record.status_reason or reason)
-        else:
-            report = builder.build_final(runtime.run_id)
+        report = await asyncio.wait_for(
+            asyncio.to_thread(build), timeout=max(0.5, final_until - monotonic())
+        )
+    except TimeoutError:
+        result.update(report_status="failed", report_error="report deadline exceeded")
+        return result
     except Exception as error:
         result.update(report_status="failed", report_error=runtime.session.sanitize(str(error)))
         return result

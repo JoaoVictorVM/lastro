@@ -6,7 +6,7 @@ import os
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urljoin, urlsplit
 
 from playwright.async_api import (
@@ -25,6 +25,9 @@ from playwright.async_api import (
 
 from lastro.auth import AuthSessionManager
 from lastro.browser.bindings import ExpectedRequest, denied_endpoint, path_parameters
+
+if TYPE_CHECKING:
+    from lastro.execution.monitor import ExecutionMonitor
 from lastro.browser.network import AuxiliaryTransport
 from lastro.browser.policy import PolicyEngine
 from lastro.browser.provenance import Provenance
@@ -130,6 +133,8 @@ class BrowserSession:
         self.auth_console: dict[tuple[Page | None, str], tuple[int, float]] = {}
         self.response_tasks: set[asyncio.Task[None]] = set()
         self.version_observed = False
+        # Monitor de limites consultado na fronteira de rede antes de toda escrita.
+        self.write_guard: ExecutionMonitor | None = None
         self.secrets: set[str] = {
             value
             for key in project.profile.credential_variable_names()
@@ -444,14 +449,25 @@ class BrowserSession:
                 and path_parameters(binding.request.path, parts.path) is not None
                 for binding in profile.policy.bindings
             ):
-                if self.policy.locks or self.auth.verified_context is None:
+                if (
+                    self.policy.locks
+                    or self.auth.verified_context is None
+                    or (
+                        self.write_guard is not None
+                        and self.write_guard.check_write(self.expected) is not None
+                    )
+                ):
                     reason = "write_lock"
                 elif self.expected is None or not self.expected.consume(
                     request.method, url, request.post_data
                 ):
                     reason = "unbound_write"
+                elif not self.journal_send(self.expected):
+                    reason = "write_journal_unavailable"
                 else:
                     self.request_actions[request] = self.expected
+                    if self.write_guard is not None:
+                        self.write_guard.write_sent(self.expected)
             if reason:
                 self.mark_abort(request, reason)
                 self.network_denial = reason
@@ -474,6 +490,17 @@ class BrowserSession:
             self.policy.locks.add("history")
             self.mark_abort(request, "history")
             await route.abort("blockedbyclient")
+
+    def journal_send(self, expected: ExpectedRequest) -> bool:
+        """Marca a intenção como enviada antes de liberar a rede; falha nega a escrita."""
+        if expected.intent_id is None:
+            return False
+        try:
+            self.history.mark_write_sending(expected.intent_id)
+        except Exception:
+            self.policy.locks.add("history")
+            return False
+        return True
 
     def response(self, response: Response) -> None:
         if self.closing_context:
@@ -510,6 +537,10 @@ class BrowserSession:
             self.needs_refresh = True
             self.policy.locks.add("tenant")
             self.expected = None
+        if expected is not None and expected.intent_id is not None:
+            # A resposta é registrada mesmo após o latch: ela fecha a ambiguidade da escrita.
+            with contextlib.suppress(Exception):
+                self.history.record_write_response(expected.intent_id, response.status)
         try:
             self.active()
             mismatch: str | None = None

@@ -119,7 +119,7 @@ def test_migrate_v004_database_to_v005(tmp_path: Path, history_context: ProjectC
         "report_snapshots",
     } <= tables
     fresh = Database(tmp_path / "fresh.sqlite")
-    assert apply_migrations(fresh) == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert apply_migrations(fresh) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 
 def test_finding_persists_fields_with_server_provenance(history_context: ProjectContext) -> None:

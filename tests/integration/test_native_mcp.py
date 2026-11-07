@@ -206,5 +206,7 @@ def test_trusted_termination_locks_owner_and_builds_partial(
     assert "run_ended" in runtime.session.policy.locks
     record = history.get_run(run_id)
     assert (record.status, record.status_reason) == (RunStatus.LIMIT_REACHED, "cost_cap")
-    assert "error" in observed
+    # Parada controlada: a tool responde com o lock de escrita e o motivo terminal estável.
+    assert (observed["decision"], observed["reason"]) == ("deny", "write_lock")
+    assert observed["execution_notice"]["reason"] == "cost_cap"
     assert "partial" in json.dumps(ended["report_path"])

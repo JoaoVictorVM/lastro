@@ -63,6 +63,8 @@ class ExpectedRequest:
     action_id: str
     used: bool = False
     completed: asyncio.Event = field(default_factory=asyncio.Event)
+    # Intenção durável do journal; sem ela a escrita nunca é encaminhada.
+    intent_id: str | None = None
 
     def consume(self, method: str, url: str, body: str | None) -> bool:
         request = self.binding.request

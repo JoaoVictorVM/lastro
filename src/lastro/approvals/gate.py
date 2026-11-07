@@ -184,6 +184,15 @@ class ApprovalGate:
                 record.action_id, "skip", "system", note=reason, run_id=self.run_id
             )
 
+    def withdraw(self, reason: str) -> None:
+        """Parada controlada: pedido aberto vira skip do sistema e aprovação ainda não usada
+        perde a validade; a decisão humana já registrada continua no histórico."""
+        self.skip_pending(reason)
+        for record in self.history.list_approvals(self.run_id):
+            if record.status == ApprovalStatus.APPROVED:
+                with contextlib.suppress(ApprovalError):
+                    self.history.invalidate_approval(self.run_id, record.action_id, reason)
+
     async def status(self, approval_id: str, wait_seconds: int) -> ApprovalRecord | None:
         """Consulta com espera curta; a tool apenas observa, nunca decide nem executa."""
         deadline = time.monotonic() + wait_seconds

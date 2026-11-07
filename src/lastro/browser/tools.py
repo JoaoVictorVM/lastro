@@ -22,6 +22,16 @@ from lastro.browser.video import EvidenceVideoRecorder, VideoError
 from lastro.config.loader import ProjectContext
 from lastro.config.policy import Binding, Strict, Target
 from lastro.config.schema import is_same_origin
+from lastro.execution.models import (
+    EXEMPT_TOOLS,
+    ActionOutcome,
+    Notice,
+    Reservation,
+    WriteIntent,
+    WriteIntentInput,
+)
+from lastro.execution.monitor import ExecutionMonitor
+from lastro.execution.progress import operation_key, page_key
 from lastro.history import (
     ApprovalStatus,
     ArtifactType,
@@ -35,6 +45,7 @@ from lastro.history import (
     MissionPlan,
     MissionPlanError,
     ReportingError,
+    RunNotFoundError,
     RunStatus,
 )
 from lastro.history.redaction import canonical_json, preview, redact, redact_text, sha256_hex
@@ -424,6 +435,8 @@ class BrowserTools:
         self.session = BrowserSession(project, history, run_id, self.active)
         self.provenance = self.session.provenance
         self.video = EvidenceVideoRecorder(self.session, history, run_id, history.run_dir(run_id))
+        self.monitor = ExecutionMonitor(self)
+        self.session.write_guard = self.monitor
         self.page: MissionPage | None = None
 
     def active(self) -> None:
@@ -440,27 +453,135 @@ class BrowserTools:
         async with self.session.lock:
             with contextlib.suppress(Exception):
                 self.approvals.reconcile()
+            action_id = uuid.uuid4().hex
+            # A reserva vem antes de qualquer validação: erro e negação também consomem ação.
+            reservation = self.admit(name, raw, action_id)
+            if reservation is not None and not reservation.admitted:
+                return await self.closed(name, raw, reservation)
+            if reservation is not None:
+                self.monitor.admitted(name, action_id, reservation.last)
+            result: dict[str, Any] = {"error": NO_RUN}
+            crashed = True
+            outcome: ActionOutcome | None = None
             try:
-                waiting = self.while_waiting(name, raw)
-                if waiting is not None:
-                    return waiting
-                try:
-                    self.active()
-                except Exception:
-                    await self.release_if_terminal()
-                    if name in KNOWLEDGE_MODELS:
-                        return {"error": NO_ACTIVE_RUN, "message": NO_RUN}
-                    return {"error": NO_RUN}
-                action_id = uuid.uuid4().hex
-                result = await self.dispatch(name, raw, action_id)
+                result = await self.handle(name, raw, action_id)
+                crashed = False
             finally:
                 self.waiting_ok = False
-            # O agente cita esses ids em record_test_check; sem eles a heurística não é provável.
-            if "error" not in result:
-                result.setdefault("action_id", action_id)
+                if reservation is not None:
+                    outcome = self.conclude(reservation, result, crashed=crashed)
+            notice = reservation.warning if reservation is not None else None
+            notice = notice or self.monitor.take_notice()
+            if outcome is not None and outcome.stop_status is not None:
+                # A parada é decidida aqui, pelo servidor; o encerramento espera esta ação.
+                self.monitor.stop(outcome.stop_status, outcome.stop_reason)
+                notice = Notice(
+                    kind="stopped", status=outcome.stop_status, reason=outcome.stop_reason
+                )
+            if notice is not None:
+                result["execution_notice"] = notice.as_json()
             return result
 
-    def while_waiting(self, name: str, raw: dict[str, Any]) -> dict[str, Any] | None:
+    async def handle(self, name: str, raw: dict[str, Any], action_id: str) -> dict[str, Any]:
+        waiting = self.while_waiting(name, raw, action_id)
+        if waiting is not None:
+            return waiting
+        try:
+            self.active()
+        except Exception:
+            await self.release_if_terminal()
+            if name in KNOWLEDGE_MODELS:
+                return {"error": NO_ACTIVE_RUN, "message": NO_RUN}
+            return {"error": NO_RUN}
+        result = await self.dispatch(name, raw, action_id)
+        # O agente cita esses ids em record_test_check; sem eles a heurística não é provável.
+        if "error" not in result:
+            result.setdefault("action_id", action_id)
+        return result
+
+    def current_route(self) -> str:
+        page = self.session.page
+        if page is None:
+            return ""
+        with contextlib.suppress(Exception):
+            return urlsplit(page.url).path
+        return ""
+
+    def admit(self, name: str, raw: dict[str, Any], action_id: str) -> Reservation | None:
+        """Reserva durável de uma ação contabilizável; run inexistente segue o fluxo comum."""
+        if name in EXEMPT_TOOLS:
+            return None
+        try:
+            run = self.history.get_run(self.run_id)
+            state = self.history.execution_state(self.run_id)
+        except RunNotFoundError:
+            return None
+        except Exception:
+            self.session.policy.locks.add("history")
+            return Reservation(
+                admitted=False, action_id=action_id, stop_reason="history_unavailable"
+            )
+        # Run encerrada normalmente mantém a resposta de run inativa; só a parada controlada
+        # responde com o lock de escrita e o motivo.
+        if run.status.is_terminal and not state.stopped:
+            return None
+        arguments = {key: value for key, value in raw.items() if key != "approval_proof"}
+        key = operation_key(name, arguments, self.project.profile.tenant_id, self.current_route())
+        try:
+            return self.history.reserve_action(self.run_id, action_id, name, key)
+        except Exception:
+            self.session.policy.locks.add("history")
+            return Reservation(
+                admitted=False, action_id=action_id, stop_reason="history_unavailable"
+            )
+
+    async def closed(
+        self, name: str, raw: dict[str, Any], reservation: Reservation
+    ) -> dict[str, Any]:
+        """Admissão fechada: nenhuma unidade nova, nenhum efeito, motivo terminal estável."""
+        self.session.policy.locks.add("execution_limit")
+        with contextlib.suppress(Exception):
+            record_call(
+                self.history,
+                self.run_id,
+                reservation.action_id,
+                name,
+                {key: value for key, value in raw.items() if key not in SECRET_ARGUMENTS},
+                Decision("deny", "write_lock", ""),
+            )
+        await self.release_if_terminal()
+        notice = Notice(
+            kind="stopped",
+            status=reservation.stop_status or RunStatus.LIMIT_REACHED.value,
+            reason=reservation.stop_reason,
+        )
+        return {"decision": "deny", "reason": "write_lock", "execution_notice": notice.as_json()}
+
+    def conclude(
+        self, reservation: Reservation, result: dict[str, Any], *, crashed: bool
+    ) -> ActionOutcome | None:
+        """Fecha a ação contabilizada com a página observada pelo browser, não pelo modelo."""
+        failed = crashed or failed_result(result)
+        page: str | None = None
+        with contextlib.suppress(Exception):
+            if self.session.page is not None:
+                page = page_key(self.session.page.url)
+        code = str(result.get("reason") or result.get("error") or result.get("status") or "")
+        try:
+            return self.history.complete_action(
+                self.run_id,
+                reservation.action_id,
+                failed=failed,
+                result_code=preview(redact_text(code), 200) or None,
+                page=page,
+            )
+        except Exception:
+            self.session.policy.locks.add("history")
+            return None
+
+    def while_waiting(
+        self, name: str, raw: dict[str, Any], action_id: str | None = None
+    ) -> dict[str, Any] | None:
         """Recusa tools enquanto há pedido pendente, salvo o retry com prova do adapter."""
         run = self.history.get_active_run(self.run_id)
         if run is None or run.status != RunStatus.AWAITING_APPROVAL:
@@ -485,7 +606,7 @@ class BrowserTools:
             record_call(
                 self.history,
                 self.run_id,
-                uuid.uuid4().hex,
+                action_id or uuid.uuid4().hex,
                 name,
                 {key: value for key, value in raw.items() if key not in SECRET_ARGUMENTS},
                 Decision("deny", reason, ""),
@@ -1078,7 +1199,12 @@ class BrowserTools:
                 if "{" in path:
                     raise ValueError("unresolved_request_path")
                 expected_url = urljoin(self.project.profile.target_url, path)
-                self.session.expected = ExpectedRequest(binding, expected_url, values, action_id)
+                expected_request = ExpectedRequest(binding, expected_url, values, action_id)
+                # Journal antes do request: sem intenção confirmada a rede nega a escrita.
+                expected_request.intent_id = self.journal_intent(
+                    binding, record_id, route, initial, business, action_id
+                ).id
+                self.session.expected = expected_request
                 self.session.network_denial = None
                 self.session.mark_action(page, action_id)
                 expected = self.session.expected
@@ -1097,6 +1223,36 @@ class BrowserTools:
             return {"status": "ok"}
 
         return execute_action, decision, view
+
+    def journal_intent(
+        self,
+        binding: Binding,
+        record_id: str,
+        route: str,
+        initial: dict[str, str | None],
+        intended: dict[str, str],
+        action_id: str,
+    ) -> WriteIntent:
+        """Valores de negócio anteriores e pretendidos, comparáveis só quando todos observados."""
+        before = {key: initial.get(field) for key, field in binding.fields.items()}
+        observed = {key: value for key, value in before.items() if value is not None}
+        known = bool(observed) and len(observed) == len(before)
+        update = binding.operation == "update"
+        return self.history.prepare_write(
+            WriteIntentInput(
+                run_id=self.run_id,
+                action_id=action_id,
+                binding_id=binding.id,
+                operation=binding.operation,
+                entity=binding.entity,
+                record_id=record_id or None,
+                tenant=self.project.profile.tenant_id,
+                detail_path=route if update else None,
+                before=observed if known else None,
+                intended=dict(intended),
+                comparable=update and known,
+            )
+        )
 
     def test_data(self, request: TestDataRequest, action_id: str) -> dict[str, Any]:
         calls = [
@@ -1171,6 +1327,15 @@ class BrowserTools:
                 raise ValueError("target required")
             await locate(page, args.target).wait_for(timeout=args.timeout_ms)
         return {"status": "ok"}
+
+
+def failed_result(result: dict[str, Any]) -> bool:
+    """Falha recuperável: erro ou negação; espera por aprovação nunca é falha."""
+    if result.get("reason") in {"approval_pending", "invalid_approval_proof"}:
+        return False
+    if result.get("decision") in {"awaiting_approval", "not_executed"}:
+        return False
+    return "error" in result or result.get("decision") == "deny"
 
 
 def knowledge_summary(raw: dict[str, Any]) -> JsonObject:
