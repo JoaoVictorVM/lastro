@@ -676,6 +676,37 @@ def _write_item(intent: WriteIntent, run_id: str | None) -> PendingItem:
     )
 
 
+def _legacy_writes(conn: sqlite3.Connection, run_id: str) -> list[PendingItem]:
+    """Ancestrais sem journal: escritas listadas como não reconciliáveis, nunca reenviadas.
+
+    Sem valores pretendidos verificáveis, nada é inferido de previews redigidos ou screenshots.
+    """
+    items: list[PendingItem] = []
+    for ancestor in ancestors(conn, run_id):
+        journaled = conn.execute(
+            "SELECT 1 FROM execution_controls WHERE run_id = ?", (ancestor,)
+        ).fetchone()
+        if journaled is not None:
+            continue
+        rows = conn.execute(
+            "SELECT correlation_id FROM events WHERE run_id = ? AND event_type = 'tool_call' "
+            "AND tool_name = 'submit' AND correlation_id IS NOT NULL ORDER BY sequence",
+            (ancestor,),
+        ).fetchall()
+        items += [
+            PendingItem(
+                kind="write",
+                reference=str(row["correlation_id"]),
+                state="unverifiable",
+                requires_manual_review=True,
+                detail="Submitted before the write journal existed; verify manually.",
+                run_id=ancestor,
+            )
+            for row in rows
+        ]
+    return items
+
+
 def pending_items(conn: sqlite3.Connection, project_id: str, run_id: str) -> list[PendingItem]:
     """Pendências da run a partir do histórico durável; não dependem da despedida do agente."""
     from lastro.history.created_records import select_created_records
@@ -703,6 +734,7 @@ def pending_items(conn: sqlite3.Connection, project_id: str, run_id: str) -> lis
         if intent.state.value in UNRESOLVED_WRITE_STATES
     ]
     items += [_write_item(intent, intent.run_id) for intent in unresolved_writes(conn, run_id)]
+    items += _legacy_writes(conn, run_id)
     for item in select_reconciliations(conn, run_id):
         if item.state in (ReconciliationState.CONFLICT, ReconciliationState.INCONCLUSIVE) or (
             item.state == ReconciliationState.READY_FOR_REVIEW and item.replacement_write_id is None

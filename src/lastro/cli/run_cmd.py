@@ -470,6 +470,69 @@ def cancel(
     raise typer.Exit(code=print_stop(outcome))
 
 
+@run_app.command("resume")
+def resume(
+    ctx: typer.Context,
+    run_id: Annotated[
+        str, typer.Argument(help="Run interrompida, cancelada ou parada por limite.")
+    ],
+) -> None:
+    """Cria uma run vinculada com orçamento novo e entrega ao executor registrado na origem.
+
+    Antes de repetir uma edição que pode ter sido enviada, o servidor confere o registro real:
+    edições já aplicadas são registradas como already_applied e nunca reenviadas.
+    """
+    from lastro.execution.resume import ResumeError, create_resumed_run, preflight
+    from lastro.execution.supervisor import enforce_deadlines
+
+    state = get_state(ctx)
+    project = state.require_history_project()
+    store = state.open_history(project)
+    with contextlib.suppress(HistoryError):
+        enforce_deadlines(store)
+    try:
+        source = preflight(store, project, run_id)
+    except ResumeError as exc:
+        output.error(f"{exc} ({exc.code})")
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    except HistoryError as exc:
+        output.error(str(exc))
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    # Mesmo executor da origem, sujeito à configuração atual; nunca troca implicitamente.
+    project = project.with_executor(source.executor_name)
+    codex = _codex_preflight(project) if project.config.executor == "codex" else None
+    bundle_hash = _bundle_hash(project.loaded.project_dir, project.config.executor)
+    embedded = executor_spec(project.config.executor).embedded
+    prepared = _native_preflight(project) if embedded else None
+    try:
+        created = create_resumed_run(
+            store,
+            project,
+            source,
+            executor=ExecutorInfo(name="codex", version=codex.install.version) if codex else None,
+            skill_bundle_version=bundle_hash,
+            executor_snapshot=_codex_snapshot(codex) if codex else None,
+        )
+    except HistoryError as exc:
+        output.error(str(exc))
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    output.info(f"Run: {created.record.id}")
+    output.info(f"Resumed from: {source.id} ({source.status.value}, {source.status_reason})")
+    output.info(f"Pasta: {created.paths.run_dir}")
+    pending = [item for item in store.pending_items(created.record.id) if item.kind == "write"]
+    if pending:
+        output.info(
+            f"Writes to verify before repeating: {len(pending)} (checked against the real record)"
+        )
+    if prepared is not None:
+        raise typer.Exit(code=_run_native(project, store, created, prepared))
+    if codex is not None:
+        output.info(f"Executor: codex {codex.install.version}")
+        output.info(f"Start Codex with: {_launch_command(state, created.record.id)}")
+        return
+    handoff(created)
+
+
 @run_app.command("reverify-tenant")
 def reverify_tenant(ctx: typer.Context) -> None:
     """Solicita ao browser dono da run uma nova verificação de tenant."""

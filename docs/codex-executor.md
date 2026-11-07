@@ -23,7 +23,7 @@ lastro run launch --run-id <id>
 
 `lastro run launch --run-id <id>` opens the interactive Codex CLI in the project folder. `lastro run launch --run-id <id> --headless` runs `codex exec` with structured follow-up, needs no terminal and prints a normalized JSON result as its last line. The launcher accepts no extra arguments for Codex.
 
-A run can be launched only once. Resuming an interrupted run is not available yet. A new `lastro run start` closes a run that was created and never launched, as `interrupted` with reason `launch_abandoned`.
+A run can be launched only once. `lastro run resume <id>` continues an interrupted, cancelled or limit-stopped run in a new linked run that keeps the Codex executor and prints its own launch command (see [execution-limits.md](execution-limits.md)). A new `lastro run start` closes a run that was created and never launched, as `interrupted` with reason `launch_abandoned`.
 
 ## What the launcher enforces
 

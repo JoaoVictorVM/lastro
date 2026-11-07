@@ -104,3 +104,29 @@ def test_launch_pending_run_has_duration_supervisor(
     record = history.get_run(run_id)
     assert (record.status, record.status_reason) == (RunStatus.LIMIT_REACHED, "duration_limit")
     assert history.execution_summary(run_id).report_kind == "partial"
+
+
+def test_resume_creates_one_linked_run(runner: CliRunner, history_context: ProjectContext) -> None:
+    history = open_history(history_context)
+    parent = history.create_run(history_context, TextMission("Explore employees")).record.id
+    history.finish_run(parent, RunStatus.LIMIT_REACHED, "no_progress")
+    before = len(history.list_runs())
+    result = runner.invoke(app, ["--profile", "homolog", "run", "resume", parent])
+    assert result.exit_code == 0, result.output
+    assert f"Resumed from: {parent} (limit_reached, no_progress)" in result.output
+    runs = history.list_runs()
+    assert len(runs) == before + 1
+    child = next(item.record for item in runs if item.record.id != parent)
+    assert history.parent_run(child.id) == parent
+    assert child.mission_text == "Explore employees"
+    assert child.config_snapshot["run_limits"] == {
+        "max_actions": 40,
+        "max_minutes": 30,
+        "max_attempts": 3,
+        "max_no_progress_actions": 10,
+    }
+    # A origem continua imutável e uma run ativa não pode ser retomada.
+    assert history.get_run(parent).status == RunStatus.LIMIT_REACHED
+    refused = runner.invoke(app, ["--profile", "homolog", "run", "resume", child.id])
+    assert refused.exit_code != 0
+    assert "resume_source_active" in refused.output

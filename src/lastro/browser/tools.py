@@ -26,12 +26,14 @@ from lastro.execution.models import (
     EXEMPT_TOOLS,
     ActionOutcome,
     Notice,
+    ReconciliationState,
     Reservation,
     WriteIntent,
     WriteIntentInput,
 )
 from lastro.execution.monitor import ExecutionMonitor
 from lastro.execution.progress import operation_key, page_key
+from lastro.execution.resume import RESUME_STATE_CONFLICT, RESUME_UNVERIFIABLE, classify
 from lastro.history import (
     ApprovalStatus,
     ArtifactType,
@@ -120,6 +122,11 @@ EFFECT_TOOLS = frozenset({"click", "fill", "select", "submit"})
 WAITING_TOOLS = frozenset({"mission_context", "end_run"})
 SECRET_ARGUMENTS = frozenset({"value", "approval_proof"})
 LOCAL_EFFECT = "Changes the form field in the browser only; nothing is sent until submit."
+RESUME_INSTRUCTION = (
+    "This run resumes an interrupted one. Previous approvals have no authority here. Before "
+    "repeating an edit listed as pending, open that record's edit page; the server compares the "
+    "stored values and never resends an edit that is already applied."
+)
 
 
 class NoArguments(Strict):
@@ -437,6 +444,10 @@ class BrowserTools:
         self.video = EvidenceVideoRecorder(self.session, history, run_id, history.run_dir(run_id))
         self.monitor = ExecutionMonitor(self)
         self.session.write_guard = self.monitor
+        self.parent_checked = False
+        self.parent_run_id: str | None = None
+        self.replacing: str | None = None
+        self.resume_check: dict[str, Any] | None = None
         self.page: MissionPage | None = None
 
     def active(self) -> None:
@@ -480,6 +491,9 @@ class BrowserTools:
                 )
             if notice is not None:
                 result["execution_notice"] = notice.as_json()
+            if self.resume_check is not None:
+                result.setdefault("resume_check", self.resume_check)
+                self.resume_check = None
             return result
 
     async def handle(self, name: str, raw: dict[str, Any], action_id: str) -> dict[str, Any]:
@@ -909,6 +923,17 @@ class BrowserTools:
             view = change_context_view(context.change_context)
             if view is not None:
                 result["change_context"] = view
+            parent = self.resumed()
+            if parent is not None:
+                result["resume"] = {
+                    "parent_run_id": parent,
+                    "pending": [
+                        item.as_json()
+                        for item in self.history.pending_items(self.run_id)
+                        if item.kind in {"write", "reconciliation", "criterion"}
+                    ],
+                    "instruction": RESUME_INSTRUCTION,
+                }
             page = self.page
             if isinstance(parsed, MissionContextInput) and parsed.section in ("issue", "changes"):
                 assert page is not None
@@ -1135,6 +1160,10 @@ class BrowserTools:
         for key, value in parameters.items():
             request_path = request_path.replace("{" + key + "}", value)
         target = tuple(sorted(args.target.model_dump(exclude_none=True).items()))
+        if name not in {"fill", "select"}:
+            barrier = await self.resume_barrier(page, binding, record_id, initial)
+            if barrier is not None:
+                return barrier
         verified = await self.session.verify()
         action = Action(
             binding.operation,
@@ -1224,6 +1253,103 @@ class BrowserTools:
 
         return execute_action, decision, view
 
+    def resumed(self) -> str | None:
+        if not self.parent_checked:
+            self.parent_run_id = self.history.parent_run(self.run_id)
+            self.parent_checked = True
+        return self.parent_run_id
+
+    async def resume_barrier(
+        self, page: Page, binding: Binding, record_id: str, initial: dict[str, str | None]
+    ) -> tuple[Any, Decision, ApprovalAction | None] | None:
+        """Antes de repetir uma edição ambígua, o servidor compara o registro real.
+
+        A barreira vale para qualquer tool, action_id ou valores no mesmo registro: a identidade é
+        tenant, entidade e registro, nunca a chamada do agente.
+        """
+        if binding.operation != "update" or not record_id or self.resumed() is None:
+            return None
+        tenant = self.project.profile.tenant_id
+        sources = [
+            intent
+            for intent in self.history.unresolved_writes(self.run_id)
+            if intent.entity == binding.entity
+            and intent.record_id == record_id
+            and intent.tenant == tenant
+        ]
+        if not sources:
+            return None
+        source = sources[0]
+        done = {
+            item.source_write_id: item for item in self.history.list_reconciliations(self.run_id)
+        }
+        reconciliation = done.get(source.id)
+        if reconciliation is None:
+            current = {key: initial.get(field) for key, field in binding.fields.items()}
+            verdict = classify(source, current)
+            evidence: str | None = None
+            if verdict.state == ReconciliationState.ALREADY_APPLIED:
+                image = await page.screenshot(mask=[page.locator('input[type="password"]')])
+                evidence = self.history.register_artifact(
+                    self.run_id,
+                    f"evidence/resume-{source.id}.png",
+                    ArtifactType.SCREENSHOT,
+                    content=image,
+                ).id
+            reconciliation = self.history.reconcile_write(
+                self.run_id,
+                source.id,
+                verdict.state,
+                verdict.reason,
+                observation_artifact_id=evidence,
+            )
+        self.resume_check = {
+            "source_write_id": source.id,
+            "state": reconciliation.state.value,
+            "record_id": record_id,
+            "evidence_artifact_id": reconciliation.observation_artifact_id,
+            "write_repeated": False,
+            "message": reconciliation.reason,
+        }
+        if reconciliation.state == ReconciliationState.READY_FOR_REVIEW:
+            # Novo envio segue a política e as aprovações desta run, vinculado à intenção original.
+            self.replacing = source.id
+            return None
+        if reconciliation.state == ReconciliationState.ALREADY_APPLIED:
+            check = dict(self.resume_check)
+
+            async def already_applied() -> dict[str, Any]:
+                return {"status": "ok", "resume_check": check}
+
+            return already_applied, Decision("allow", "already_applied", ""), None
+        code = (
+            RESUME_STATE_CONFLICT
+            if reconciliation.state == ReconciliationState.CONFLICT
+            else RESUME_UNVERIFIABLE
+        )
+        return None, Decision("deny", code, ""), None
+
+    def missing_record(self, path: str) -> dict[str, Any] | None:
+        """404 na página do registro pendente: inconclusivo e nenhuma escrita repetida.
+
+        Falha de navegação, 401/403, timeout ou seletor ausente nunca provam inexistência.
+        """
+        if self.resumed() is None:
+            return None
+        for intent in self.history.unresolved_writes(self.run_id):
+            if intent.detail_path != path or intent.tenant != self.project.profile.tenant_id:
+                continue
+            verdict = classify(intent, None)
+            self.history.reconcile_write(self.run_id, intent.id, verdict.state, verdict.reason)
+            return {
+                "source_write_id": intent.id,
+                "state": verdict.state.value,
+                "record_id": intent.record_id,
+                "write_repeated": False,
+                "message": verdict.reason,
+            }
+        return None
+
     def journal_intent(
         self,
         binding: Binding,
@@ -1238,7 +1364,7 @@ class BrowserTools:
         observed = {key: value for key, value in before.items() if value is not None}
         known = bool(observed) and len(observed) == len(before)
         update = binding.operation == "update"
-        return self.history.prepare_write(
+        intent = self.history.prepare_write(
             WriteIntentInput(
                 run_id=self.run_id,
                 action_id=action_id,
@@ -1253,6 +1379,10 @@ class BrowserTools:
                 comparable=update and known,
             )
         )
+        if self.replacing is not None:
+            self.history.link_replacement_write(self.run_id, self.replacing, intent.id)
+            self.replacing = None
+        return intent
 
     def test_data(self, request: TestDataRequest, action_id: str) -> dict[str, Any]:
         calls = [
@@ -1312,7 +1442,11 @@ class BrowserTools:
             }
         if name == "navigate":
             self.session.mark_action(page, action_id)
-            await page.goto(args.url or "")
+            response = await page.goto(args.url or "")
+            if response is not None and response.status == 404:
+                check = self.missing_record(urlsplit(page.url).path)
+                if check is not None:
+                    return {"status": "ok", "resume_check": check}
         elif name == "screenshot":
             image = await page.screenshot(mask=[page.locator('input[type="password"]')])
             artifact = self.history.register_artifact(
