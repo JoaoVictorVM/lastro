@@ -23,6 +23,8 @@ from lastro.timeutil import to_display_zone
 
 POLL_INTERVAL_SECONDS = 0.5
 REPORT_WAIT_SECONDS = 5.0
+# Espera pela rodada automática depois de uma run completed com findings suspected.
+REPRODUCTION_START_SECONDS = 15.0
 DESCRIPTION_LENGTH = 80
 NO_ACTIVE_RUN_MESSAGE = "Nenhuma run ativa neste projeto. Informe o id: lastro tail <run-id>"
 DECISION_COLORS = {
@@ -203,6 +205,57 @@ def execution_line(event: EventRecord) -> str | None:
     return None
 
 
+def reproduction_line(event: EventRecord) -> str | None:
+    """Início da rodada, tentativas e veredito por finding, nas formas literais do PRD."""
+    from lastro.reproduction.coordinator import started_line, verdict_line
+
+    payload = event.payload
+    if not isinstance(payload, dict):
+        return None
+    if event.event_type == EventType.REPRODUCTION_STARTED:
+        count = payload.get("count")
+        resumed = " (resumed)" if payload.get("resumed") is True else ""
+        return started_line(count if isinstance(count, int) else 0) + resumed
+    if event.event_type == EventType.REPRODUCTION_ATTEMPT_FINISHED:
+        reason = _field(payload, "reason")
+        return (
+            f"reproduction attempt {_field(payload, 'ordinal')} "
+            f"({_field(payload, 'executor')}): {_field(payload, 'outcome')}"
+            + (f" ({reason})" if reason else "")
+        )
+    if event.event_type == EventType.REPRODUCTION_VERDICT:
+        line = verdict_line(_field(payload, "label"), _field(payload, "title"))
+        missing = _field(payload, "missing_precondition")
+        if missing:
+            label = _field(payload, "label")
+            line = line.replace(label, f"{label}: {missing}", 1)
+        return line
+    return None
+
+
+def reproduction_pending(store: HistoryStore, run_id: str, waited: float) -> bool:
+    """A run terminou, mas a rodada está aberta ou a automática ainda pode começar."""
+    from lastro.config.reproduction import ReproductionSettings, settings_from_snapshot
+    from lastro.history import REPRODUCTION_CHILD_BLOCK, RunStatus
+
+    status = store.reproduction_status(run_id)
+    if status.open_round is not None:
+        return True
+    record = store.get_run(run_id)
+    if (
+        record.status != RunStatus.COMPLETED
+        or REPRODUCTION_CHILD_BLOCK in record.config_snapshot
+        or status.last_closed_at is not None
+        or status.eligible == 0
+        or waited >= REPRODUCTION_START_SECONDS
+    ):
+        return False
+    settings = settings_from_snapshot(
+        record.config_snapshot.get("reproduction"), ReproductionSettings()
+    )
+    return settings.auto
+
+
 def stop_summary(store: HistoryStore, run_id: str) -> list[str]:
     """Linha final de runs paradas por limite ou cancelamento, com o relatório efetivo."""
     from lastro.execution.models import LIMIT_REASONS, USER_CANCELLED, stop_message
@@ -246,6 +299,9 @@ def format_event(event: EventRecord, timezone: str) -> str:
     native = native_line(event)
     if native is not None:
         return f"{moment}  {native}"
+    reproduction = reproduction_line(event)
+    if reproduction is not None:
+        return f"{moment}  {reproduction}"
     if event.event_type == EventType.ORACLE_SIGNAL:
         description = oracle_description(event)
         if description is not None:
@@ -306,6 +362,8 @@ def tail(
                 raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE)
             run_id = active.id
         cursor = 0
+        waited = 0.0
+        summarized = False
         while True:
             # O status é lido antes dos eventos: se já era terminal, a leitura seguinte inclui
             # run_ended e esvazia a run sem perder eventos tardios.
@@ -321,9 +379,13 @@ def tail(
                     typer.echo(BELL, nl=False)
                 cursor = event.sequence
             if finished:
-                for line in stop_summary(store, run_id):
-                    output.info(line)
-                return
+                if not summarized:
+                    for line in stop_summary(store, run_id):
+                        output.info(line)
+                    summarized = True
+                if not reproduction_pending(store, run_id, waited):
+                    return
+                waited += POLL_INTERVAL_SECONDS
             sleep(POLL_INTERVAL_SECONDS)
     except KeyboardInterrupt:
         output.info("")

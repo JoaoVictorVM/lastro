@@ -282,3 +282,73 @@ def test_report_includes_active_mission_plan_and_charter(
     assert "- Validar o cadastro" in mission
     criteria = text[text.index("## Criteria results") : text.index("## Confirmed findings")]
     assert f"O telefone persiste (`{plan.criteria[0].id}`) | inconclusive" in criteria
+
+
+def test_f13_reproduction_verdicts_are_a_stable_contract_for_evaluation(
+    history_context: ProjectContext,
+) -> None:
+    """F13 -> F14: métricas de falso positivo leem o veredito, nunca a classificação do agente."""
+    from lastro.history import (
+        EvidencePurpose,
+        EvidenceReference,
+        ExpectedSource,
+        FailureDomain,
+        FindingClassification,
+        FindingDraft,
+        ReproductionVerdict,
+    )
+    from lastro.reporting.builder import ReportBuilder
+    from lastro.reproduction.coordinator import ReproductionCoordinator
+
+    store = open_history(history_context)
+    run_id = store.create_run(history_context, TextMission("Explore")).record.id
+    shot = store.register_artifact(run_id, "evidence/a.png", ArtifactType.SCREENSHOT, content=b"a")
+    store.report_finding(
+        run_id,
+        FindingDraft(
+            title="CPF duplicado aceito",
+            flow="Cadastro",
+            preconditions=(),
+            steps=("Salvar",),
+            expected="Recusa",
+            expected_source=ExpectedSource.HEURISTIC,
+            expected_source_ref=None,
+            observed="Aceito",
+            evidence=(EvidenceReference(shot.id, EvidencePurpose.STATE),),
+            classification=FindingClassification.SUSPECTED,
+            limitations=(),
+            failure_domain=FailureDomain.SYSTEM,
+        ),
+    )
+    store.finish_run(run_id, RunStatus.COMPLETED)
+    ReproductionCoordinator(history_context, store, launchers={}, build_report=False).run(run_id)
+
+    verdicts = store.list_reproduction_verdicts(run_id)
+    assert len(verdicts) == 1
+    assert {field.name for field in dataclasses.fields(ReproductionVerdict)} == {
+        "finding_id",
+        "run_id",
+        "round_id",
+        "attempts_planned",
+        "attempts_decisive",
+        "reproduced_count",
+        "classification",
+        "reason",
+        "missing_precondition",
+        "intermittent",
+        "cross_executor",
+        "explorer_executor",
+        "verifier_executor",
+        "notes",
+        "decided_at",
+        "content_sha256",
+    }
+    verdict = verdicts[0]
+    assert verdict.run_id == run_id and verdict.label == "inconclusive (executor)"
+    finding = store.get_finding(verdict.finding_id)
+    assert finding.classification == FindingClassification.INCONCLUSIVE
+
+    report = ReportBuilder(store).build_final(run_id)
+    projected = report.data.suspected[0].verdict
+    assert projected is not None
+    assert (projected.label, projected.explorer_executor) == (verdict.label, "claude-code")

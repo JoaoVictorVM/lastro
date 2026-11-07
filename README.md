@@ -130,6 +130,8 @@ Each run can reuse what earlier runs observed. The agent proposes typed facts (f
 
 The agent submits findings with `report_finding` (numbered steps, preconditions, the expected result with its source, the observed result and evidence ids from the same run) and records each criterion with `record_criterion_result`; `met` always needs positive evidence. Findings start as `suspected` or `inconclusive`, and agent or tool failures are kept apart from defects of the system under test. When the run ends, Lastro writes `runs/<run id>/report.md` from the history only, plus a bug draft per confirmed finding in `issues/`. `lastro report verify <run id>` recomputes the SHA-256 of every artifact and exits 2 when one changed, and `lastro report export --public <run id>` writes a copy without tenant names, URLs, record ids or screenshots. See [docs/browser-tools.md](docs/browser-tools.md#findings-criteria-and-evidence) for the contracts.
 
+A suspected finding only becomes `confirmed` after independent reproduction: when a run ends `completed`, Lastro replays each suspected finding in fresh child runs (2 attempts, 3 when tagged `intermittent`) that receive only its preconditions, steps and expected result, never the explorer's reasoning or observed result. The server decides each attempt from the child run's own evidence, policy decisions and limits, and records an immutable verdict such as `confirmed (2/2)`, `confirmed (1/3, intermittent)`, `not reproduced` or `inconclusive (blocked)`. `lastro run reproduce <run id>` runs or resumes a round on demand, and `mode = "cross"` verifies with a different executor than the explorer. See [docs/reproduction.md](docs/reproduction.md).
+
 ## Roadmap
 
 Each release adds one capability and ends with a measurable result.
