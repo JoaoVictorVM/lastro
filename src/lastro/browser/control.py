@@ -112,7 +112,12 @@ class HumanControl:
 
     async def terminate(self, message: dict[str, Any]) -> None:
         """Encerramento confiável do runner nativo: estado e motivo restritos, eco do nonce."""
-        from lastro.browser.lifecycle import TRUSTED_REASONS, TRUSTED_STATUSES, finalize
+        from lastro.browser.lifecycle import (
+            PARTIAL_STATUSES,
+            TRUSTED_REASONS,
+            TRUSTED_STATUSES,
+            finalize,
+        )
 
         status, reason = message.get("status"), message.get("reason")
         if (
@@ -122,10 +127,19 @@ class HumanControl:
         ):
             response: dict[str, object] = {"nonce": message["nonce"], "error": "invalid_request"}
         else:
+            target, cause = RunStatus(status), str(reason)
+            self.runtime.monitor.engage()
+            if target in PARTIAL_STATUSES:
+                # Mesmo latch dos limites: o primeiro motivo confirmado vence.
+                with contextlib.suppress(Exception):
+                    latch = self.runtime.history.latch_stop(
+                        self.runtime.run_id, target, cause, origin="trusted_channel"
+                    )
+                    if latch.state.stop_status and latch.state.stop_reason:
+                        target = RunStatus(latch.state.stop_status)
+                        cause = latch.state.stop_reason
             async with self.runtime.session.lock:
-                result = await finalize(
-                    self.runtime, RunStatus(status), str(reason), skip_reason=str(reason)
-                )
+                result = await finalize(self.runtime, target, cause, skip_reason=cause)
             response = {
                 "nonce": message["nonce"],
                 "status": result["status"],

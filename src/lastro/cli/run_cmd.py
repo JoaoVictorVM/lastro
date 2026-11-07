@@ -1,6 +1,7 @@
 """Grupo lastro run: cria a run durável antes de qualquer interação com o sistema alvo."""
 
 import asyncio
+import contextlib
 import secrets
 import sys
 from collections.abc import Callable
@@ -366,6 +367,11 @@ def launch(
     if not headless and not (sys.stdin.isatty() and sys.stdout.isatty()):
         _usage("Interactive Codex needs a terminal; use --headless without a TTY.")
     store = state.open_history(project)
+    from lastro.execution.supervisor import enforce_deadlines
+
+    # Run aguardando launch também tem prazo: expirada, termina antes de abrir o executor.
+    with contextlib.suppress(HistoryError):
+        enforce_deadlines(store)
     mode = LaunchMode.HEADLESS if headless else LaunchMode.INTERACTIVE
     try:
         result = run_codex(project, store, run_id, mode, write=output.info)
@@ -415,6 +421,53 @@ def _run_native(
     for line in summary_lines(outcome):
         output.info(line)
     return exit_code(outcome)
+
+
+def print_stop(outcome: Any) -> int:
+    """Estado, motivo e relatório efetivos; nunca afirma um relatório que não existe."""
+    from lastro.execution.models import stop_message
+
+    path = str(outcome.report_path) if outcome.report_path is not None else None
+    if outcome.already_ended:
+        reason = f" ({outcome.reason})" if outcome.reason else ""
+        output.info(f"Run {outcome.run_id} already ended: {outcome.status}{reason}.")
+        if path is not None:
+            output.info(f"Report: {path}")
+        return 0
+    limit = None
+    summary = outcome.summary
+    if summary is not None and outcome.reason == "action_limit":
+        limit = summary.max_actions
+    if outcome.report_failed:
+        output.info(stop_message(outcome.reason, limit, None))
+        output.error("The partial report could not be produced; the run state was saved.")
+        return 1
+    output.info(stop_message(outcome.reason, limit, path))
+    pending = summary.pending_items if summary is not None else ()
+    if pending:
+        output.info(f"Pending items: {len(pending)} (see the report)")
+    return 0
+
+
+@run_app.command("cancel")
+def cancel(
+    ctx: typer.Context,
+    run_id: Annotated[
+        str | None, typer.Argument(help="Run a cancelar; sem id, usa a única run em andamento.")
+    ] = None,
+) -> None:
+    """Cancela a run: trava escritas, retira aprovações pendentes e gera o relatório parcial."""
+    from lastro.execution.supervisor import stop_run
+
+    state = get_state(ctx)
+    project = state.require_history_project()
+    store = state.open_history(project)
+    try:
+        outcome = stop_run(store, run_id)
+    except HistoryError as exc:
+        output.error(str(exc))
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    raise typer.Exit(code=print_stop(outcome))
 
 
 @run_app.command("reverify-tenant")

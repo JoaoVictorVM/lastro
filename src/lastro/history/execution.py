@@ -112,6 +112,11 @@ def select_state(conn: sqlite3.Connection, run_id: str) -> ExecutionState:
     return _state_from_row(row, limits)
 
 
+def has_control(conn: sqlite3.Connection, run_id: str) -> bool:
+    row = conn.execute("SELECT 1 FROM execution_controls WHERE run_id = ?", (run_id,)).fetchone()
+    return row is not None
+
+
 def _writable_state(conn: sqlite3.Connection, run_id: str) -> ExecutionState:
     init_control(conn, select_run(conn, run_id))
     return select_state(conn, run_id)

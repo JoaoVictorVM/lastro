@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
 if TYPE_CHECKING:
+    from lastro.execution.models import ExecutionState, PendingItem, Reconciliation
     from lastro.history.native import NativeUsage
 
 from lastro.knowledge.models import MemoryOutcome
@@ -705,6 +706,11 @@ class ReportInputs:
     change_context: ChangeContextRecord | None = None
     issue_snapshot: IssueSnapshotRecord | None = None
     version_observations: tuple[JsonObject, ...] = ()
+    # Controle de execução; None em runs que nunca registraram ação nem retomada.
+    execution: "ExecutionState | None" = None
+    pending_items: "tuple[PendingItem, ...]" = ()
+    parent_run_id: str | None = None
+    reconciliations: "tuple[Reconciliation, ...]" = ()
 
 
 APPROVAL_TTL_SECONDS = 900

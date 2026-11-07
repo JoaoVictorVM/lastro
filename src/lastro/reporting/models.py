@@ -358,6 +358,40 @@ class ChangeContextView:
 
 
 @dataclass(frozen=True)
+class PendingView:
+    kind: str
+    reference: str
+    state: str
+    requires_manual_review: bool
+    detail: str
+    run_id: str | None
+
+
+@dataclass(frozen=True)
+class ReconciliationView:
+    source_write_id: str
+    state: str
+    reason: str
+    evidence_artifact_id: str | None
+
+
+@dataclass(frozen=True)
+class ExecutionView:
+    """Limites efetivos, consumo, motivo de parada, vínculo de retomada e pendências."""
+
+    stop_status: str | None
+    stop_reason: str | None
+    actions_used: int
+    max_actions: int
+    max_minutes: int
+    max_attempts: int
+    max_no_progress_actions: int
+    parent_run_id: str | None
+    pending: tuple[PendingView, ...]
+    reconciliations: tuple[ReconciliationView, ...]
+
+
+@dataclass(frozen=True)
 class MissionView:
     source: str
     text: str | None
@@ -415,3 +449,4 @@ class ReportData:
     missing_evidence: tuple[str, ...]
     model_usage: ModelUsageView | None = None
     change_context: ChangeContextView | None = None
+    execution: ExecutionView | None = None

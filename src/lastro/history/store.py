@@ -13,6 +13,7 @@ import sqlite3
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from lastro import get_version
 from lastro.change_context.models import ChangeContextDraft, PreparedContext
@@ -1438,6 +1439,7 @@ class HistoryStore:
                 change_context=select_context(conn, run_id),
                 issue_snapshot=_run_snapshot(conn, run_id),
                 version_observations=tuple(select_version_observations(conn, run_id)),
+                **self._execution_inputs(conn, run_id),
             )
 
         return self._database.read(read)
@@ -1580,6 +1582,26 @@ class HistoryStore:
         if record.project_id != self.project_id:
             raise RunNotFoundError(run_id)
         return record
+
+    def _execution_inputs(self, conn: sqlite3.Connection, run_id: str) -> dict[str, Any]:
+        """Projeção de execução na mesma transação das demais entradas do relatório."""
+        parent = execution.select_parent(conn, run_id)
+        if not execution.has_control(conn, run_id) and parent is None:
+            return {}
+        return {
+            "execution": execution.select_state(conn, run_id),
+            "pending_items": tuple(execution.pending_items(conn, self.project_id, run_id)),
+            "parent_run_id": parent,
+            "reconciliations": tuple(execution.select_reconciliations(conn, run_id)),
+        }
+
+    def list_non_terminal(self) -> list[RunRecord]:
+        """Runs ainda abertas do projeto, em ordem de início, inclusive à espera de launch."""
+        return [
+            record
+            for record in self._database.read(select_non_terminal)
+            if record.project_id == self.project_id
+        ]
 
     def execution_state(self, run_id: str) -> ExecutionState:
         def read(conn: sqlite3.Connection) -> ExecutionState:
