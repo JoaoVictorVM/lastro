@@ -119,6 +119,9 @@ def interpret(facts: AttemptFacts) -> AttemptResult:
         return _inconclusive(facts, AttemptReason.EXECUTOR, facts.executor_note)
     report = facts.report
     note = report.note if report is not None else ""
+    # Bloqueio vence até um relato de reprodução: o reprodutor não seguiu o caminho do explorador.
+    if facts.auth_failed or facts.denied_signatures & facts.allowed_signatures:
+        return _inconclusive(facts, AttemptReason.BLOCKED, note)
     if report is not None and report.result == ReproducerResult.REPRODUCED:
         evidence = report.evidence_artifact_ids
         if not evidence or not set(evidence) <= facts.child_artifact_ids:
@@ -136,8 +139,6 @@ def interpret(facts: AttemptFacts) -> AttemptResult:
             evidence_artifact_ids=evidence,
             note=note,
         )
-    if facts.auth_failed or facts.denied_signatures & facts.allowed_signatures:
-        return _inconclusive(facts, AttemptReason.BLOCKED, note)
     if facts.child_status == RunStatus.LIMIT_REACHED and facts.child_reason in BUDGET_REASONS:
         return _inconclusive(facts, AttemptReason.BUDGET, facts.child_reason or "")
     if report is None:

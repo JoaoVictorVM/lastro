@@ -381,6 +381,7 @@ def launch(
         output.info(line)
     if headless:
         output.info(result_json(result))
+    _reproduce_after(project, store, run_id)
     raise typer.Exit(code=result.exit_code)
 
 
@@ -420,7 +421,15 @@ def _run_native(
         return INTERRUPTED_EXIT_CODE
     for line in summary_lines(outcome):
         output.info(line)
+    _reproduce_after(project, store, created.record.id)
     return exit_code(outcome)
+
+
+def _reproduce_after(project: ProjectContext, store: HistoryStore, run_id: str) -> None:
+    """Reprodução automática no mesmo processo da CLI, depois de uma run completed."""
+    from lastro.reproduction.trigger import auto_reproduce
+
+    auto_reproduce(project, store, run_id, write=output.info)
 
 
 def print_stop(outcome: Any) -> int:
@@ -531,6 +540,52 @@ def resume(
         output.info(f"Start Codex with: {_launch_command(state, created.record.id)}")
         return
     handoff(created)
+
+
+@run_app.command("reproduce")
+def reproduce(
+    ctx: typer.Context,
+    run_id: Annotated[str, typer.Argument(help="Run encerrada com findings suspected.")],
+    finding: Annotated[
+        str | None, typer.Option("--finding", help="Reproduz só este finding.")
+    ] = None,
+    verifier: Annotated[
+        str | None,
+        typer.Option("--verifier", help="Executor verificador; só com reproduction.mode = cross."),
+    ] = None,
+    auto: Annotated[bool, typer.Option("--auto", hidden=True)] = False,
+) -> None:
+    """Repete cada finding suspected em runs filhas novas e grava um veredito imutável.
+
+    O reprodutor recebe só pré-condições, passos e resultado esperado. Findings com veredito são
+    ignorados; uma rodada interrompida continua pelas tentativas que faltam.
+    """
+    from lastro.history import ActiveRunExistsError, ReproductionError
+    from lastro.reproduction.coordinator import ReproductionCoordinator
+    from lastro.reproduction.trigger import should_reproduce
+
+    state = get_state(ctx)
+    project = state.require_history_project()
+    store = state.open_history(project)
+    try:
+        if auto and not should_reproduce(project, store.get_run(run_id)):
+            return
+        outcome = ReproductionCoordinator(project, store, write=output.info).run(
+            run_id, finding_id=finding, verifier=verifier
+        )
+    except ActiveRunExistsError as exc:
+        output.error(f"Another run is active ({exc.run_id}); findings were not changed.")
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    except ReproductionError as exc:
+        output.error(f"{exc.detail} ({exc.code})")
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    except HistoryError as exc:
+        output.error(str(exc))
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    if outcome.message is not None:
+        output.info(outcome.message)
+    if outcome.report_path is not None:
+        output.info(f"Report: {outcome.report_path}")
 
 
 @run_app.command("reverify-tenant")

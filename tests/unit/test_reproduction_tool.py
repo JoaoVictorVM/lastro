@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from lastro.browser.tools import TOOLS, BrowserTools, catalog
@@ -114,3 +115,24 @@ def test_child_run_has_reduced_limits_and_no_memory(history_context: ProjectCont
     assert memory["error"] == "knowledge_unavailable"
     reproduction_catalog = [tool.name for tool in expected_catalog(reproduction=True)]
     assert reproduction_catalog[-1] == REPRODUCTION_TOOL
+
+
+def test_codex_child_session_enables_the_tool(tmp_path: Path) -> None:
+    from lastro.codex.config import SessionIdentity, pinned_server
+
+    policy = {"mcp_servers": {"lastro": {"enabled_tools": sorted(TOOLS)}}}
+
+    def identity(reproduction: bool) -> SessionIdentity:
+        return SessionIdentity(
+            project_dir=tmp_path,
+            config_path=tmp_path / "lastro.toml",
+            profile="local",
+            run_id="run_x",
+            private_root=tmp_path / "private",
+            codex_home=tmp_path / "codex",
+            instructions="",
+            reproduction=reproduction,
+        )
+
+    assert pinned_server(policy, identity(False))["enabled_tools"] == sorted(TOOLS)
+    assert REPRODUCTION_TOOL in pinned_server(policy, identity(True))["enabled_tools"]

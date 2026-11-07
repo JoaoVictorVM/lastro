@@ -48,7 +48,14 @@ from lastro.codex.preflight import (
     probe_install,
 )
 from lastro.config.loader import ENV_FILENAME, ProjectContext
-from lastro.history import HistoryError, HistoryStore, LaunchClaimError, RunRecord, RunStatus
+from lastro.history import (
+    REPRODUCTION_CHILD_BLOCK,
+    HistoryError,
+    HistoryStore,
+    LaunchClaimError,
+    RunRecord,
+    RunStatus,
+)
 from lastro.history.redaction import redact_text
 from lastro.mission import BundleError, instruction_problems, verify_bundle
 from lastro.skills import SKILL_FILES
@@ -484,6 +491,7 @@ def launch(
         private_root=project.loaded.private_data_root,
         codex_home=home,
         instructions=_instructions(project_dir),
+        reproduction=REPRODUCTION_CHILD_BLOCK in history.get_run(run_id).config_snapshot,
     )
     try:
         foreign = codex_config.resolve_foreign_servers(
