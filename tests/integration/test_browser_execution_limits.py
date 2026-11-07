@@ -150,9 +150,12 @@ def test_write_after_limit_never_reaches_demo(
             # Outro processo grava o latch: o guard consulta o estado durável antes da rede.
             open_history(context).latch_stop(run_id, RunStatus.LIMIT_REACHED, "no_progress")
             page = cast(Page, runtime.session.page)
-            blocked = await page.evaluate(WRITE_FETCH)
+            # A escrita parte de dentro de uma ação: o encerramento espera a drenagem dela.
+            async with runtime.session.lock:
+                blocked = await page.evaluate(WRITE_FETCH)
             return bool(blocked)
         finally:
+            await runtime.monitor.wait(15)
             await runtime.session.close()
 
     assert asyncio.run(scenario())
@@ -172,7 +175,8 @@ def test_deadline_rechecked_at_network_boundary(
             runtime.monitor.arm()
             runtime.monitor.deadline = runtime.monitor.monotonic() - 1
             page = cast(Page, runtime.session.page)
-            return bool(await page.evaluate(WRITE_FETCH))
+            async with runtime.session.lock:
+                return bool(await page.evaluate(WRITE_FETCH))
         finally:
             await runtime.monitor.wait(15)
             await runtime.session.close()
