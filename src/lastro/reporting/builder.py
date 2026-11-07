@@ -47,9 +47,12 @@ from lastro.reporting.models import (
     CriterionView,
     EnvironmentView,
     EvidenceView,
+    ExecutionView,
     FindingView,
     MissionView,
     ModelUsageView,
+    PendingView,
+    ReconciliationView,
     ReportData,
     ReproductionView,
     SignalView,
@@ -129,7 +132,45 @@ def data_sha256(data: ReportData) -> str:
         content.pop("model_usage", None)
     if content.get("change_context") is None:
         content.pop("change_context", None)
+    if content.get("execution") is None:
+        content.pop("execution", None)
     return sha256_text(canonical(content))
+
+
+def _execution(inputs: ReportInputs) -> ExecutionView | None:
+    state = inputs.execution
+    if state is None:
+        return None
+    return ExecutionView(
+        stop_status=state.stop_status,
+        stop_reason=state.stop_reason,
+        actions_used=state.actions_reserved,
+        max_actions=state.max_actions,
+        max_minutes=state.max_minutes,
+        max_attempts=state.max_attempts,
+        max_no_progress_actions=state.max_no_progress_actions,
+        parent_run_id=inputs.parent_run_id,
+        pending=tuple(
+            PendingView(
+                kind=item.kind,
+                reference=item.reference,
+                state=item.state,
+                requires_manual_review=item.requires_manual_review,
+                detail=item.detail,
+                run_id=item.run_id,
+            )
+            for item in inputs.pending_items
+        ),
+        reconciliations=tuple(
+            ReconciliationView(
+                source_write_id=item.source_write_id,
+                state=item.state.value,
+                reason=item.reason,
+                evidence_artifact_id=item.observation_artifact_id,
+            )
+            for item in inputs.reconciliations
+        ),
+    )
 
 
 def _model_usage(inputs: ReportInputs) -> ModelUsageView | None:
@@ -478,6 +519,7 @@ def project(
         missing_evidence=missing,
         model_usage=_model_usage(inputs),
         change_context=_change_context(inputs),
+        execution=_execution(inputs),
     )
 
 

@@ -88,10 +88,14 @@ async def serve(
         await control.start()
         assert runtime is not None
         runtime.proofs = control.accept_proof
+        # O prazo corre antes da primeira chamada e durante esperas, mesmo sem tools.
+        await runtime.monitor.start()
     try:
         async with stdio_server() as (read, write):
             await server.run(read, write, server.create_initialization_options())
     finally:
+        if runtime is not None:
+            await runtime.monitor.close()
         if control is not None:
             await control.close()
         if runtime is not None:

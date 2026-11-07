@@ -30,6 +30,8 @@ def exit_code_for(status: str, reason: str | None, report_failed: bool = False) 
         return EXIT_CANCELLED
     if status == RunStatus.INTERRUPTED.value and reason == REASON_LIMIT:
         return EXIT_LIMIT
+    if status == RunStatus.LIMIT_REACHED.value:
+        return EXIT_LIMIT
     if status == RunStatus.COMPLETED.value and not report_failed:
         return EXIT_COMPLETED
     return EXIT_FAILED

@@ -1,6 +1,7 @@
 """Grupo lastro run: cria a run durável antes de qualquer interação com o sistema alvo."""
 
 import asyncio
+import contextlib
 import secrets
 import sys
 from collections.abc import Callable
@@ -366,6 +367,11 @@ def launch(
     if not headless and not (sys.stdin.isatty() and sys.stdout.isatty()):
         _usage("Interactive Codex needs a terminal; use --headless without a TTY.")
     store = state.open_history(project)
+    from lastro.execution.supervisor import enforce_deadlines
+
+    # Run aguardando launch também tem prazo: expirada, termina antes de abrir o executor.
+    with contextlib.suppress(HistoryError):
+        enforce_deadlines(store)
     mode = LaunchMode.HEADLESS if headless else LaunchMode.INTERACTIVE
     try:
         result = run_codex(project, store, run_id, mode, write=output.info)
@@ -415,6 +421,116 @@ def _run_native(
     for line in summary_lines(outcome):
         output.info(line)
     return exit_code(outcome)
+
+
+def print_stop(outcome: Any) -> int:
+    """Estado, motivo e relatório efetivos; nunca afirma um relatório que não existe."""
+    from lastro.execution.models import stop_message
+
+    path = str(outcome.report_path) if outcome.report_path is not None else None
+    if outcome.already_ended:
+        reason = f" ({outcome.reason})" if outcome.reason else ""
+        output.info(f"Run {outcome.run_id} already ended: {outcome.status}{reason}.")
+        if path is not None:
+            output.info(f"Report: {path}")
+        return 0
+    limit = None
+    summary = outcome.summary
+    if summary is not None and outcome.reason == "action_limit":
+        limit = summary.max_actions
+    if outcome.report_failed:
+        output.info(stop_message(outcome.reason, limit, None))
+        output.error("The partial report could not be produced; the run state was saved.")
+        return 1
+    output.info(stop_message(outcome.reason, limit, path))
+    pending = summary.pending_items if summary is not None else ()
+    if pending:
+        output.info(f"Pending items: {len(pending)} (see the report)")
+    return 0
+
+
+@run_app.command("cancel")
+def cancel(
+    ctx: typer.Context,
+    run_id: Annotated[
+        str | None, typer.Argument(help="Run a cancelar; sem id, usa a única run em andamento.")
+    ] = None,
+) -> None:
+    """Cancela a run: trava escritas, retira aprovações pendentes e gera o relatório parcial."""
+    from lastro.execution.supervisor import stop_run
+
+    state = get_state(ctx)
+    project = state.require_history_project()
+    store = state.open_history(project)
+    try:
+        outcome = stop_run(store, run_id)
+    except HistoryError as exc:
+        output.error(str(exc))
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    raise typer.Exit(code=print_stop(outcome))
+
+
+@run_app.command("resume")
+def resume(
+    ctx: typer.Context,
+    run_id: Annotated[
+        str, typer.Argument(help="Run interrompida, cancelada ou parada por limite.")
+    ],
+) -> None:
+    """Cria uma run vinculada com orçamento novo e entrega ao executor registrado na origem.
+
+    Antes de repetir uma edição que pode ter sido enviada, o servidor confere o registro real:
+    edições já aplicadas são registradas como already_applied e nunca reenviadas.
+    """
+    from lastro.execution.resume import ResumeError, create_resumed_run, preflight
+    from lastro.execution.supervisor import enforce_deadlines
+
+    state = get_state(ctx)
+    project = state.require_history_project()
+    store = state.open_history(project)
+    with contextlib.suppress(HistoryError):
+        enforce_deadlines(store)
+    try:
+        source = preflight(store, project, run_id)
+    except ResumeError as exc:
+        output.error(f"{exc} ({exc.code})")
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    except HistoryError as exc:
+        output.error(str(exc))
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    # Mesmo executor da origem, sujeito à configuração atual; nunca troca implicitamente.
+    project = project.with_executor(source.executor_name)
+    codex = _codex_preflight(project) if project.config.executor == "codex" else None
+    bundle_hash = _bundle_hash(project.loaded.project_dir, project.config.executor)
+    embedded = executor_spec(project.config.executor).embedded
+    prepared = _native_preflight(project) if embedded else None
+    try:
+        created = create_resumed_run(
+            store,
+            project,
+            source,
+            executor=ExecutorInfo(name="codex", version=codex.install.version) if codex else None,
+            skill_bundle_version=bundle_hash,
+            executor_snapshot=_codex_snapshot(codex) if codex else None,
+        )
+    except HistoryError as exc:
+        output.error(str(exc))
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    output.info(f"Run: {created.record.id}")
+    output.info(f"Resumed from: {source.id} ({source.status.value}, {source.status_reason})")
+    output.info(f"Pasta: {created.paths.run_dir}")
+    pending = [item for item in store.pending_items(created.record.id) if item.kind == "write"]
+    if pending:
+        output.info(
+            f"Writes to verify before repeating: {len(pending)} (checked against the real record)"
+        )
+    if prepared is not None:
+        raise typer.Exit(code=_run_native(project, store, created, prepared))
+    if codex is not None:
+        output.info(f"Executor: codex {codex.install.version}")
+        output.info(f"Start Codex with: {_launch_command(state, created.record.id)}")
+        return
+    handoff(created)
 
 
 @run_app.command("reverify-tenant")

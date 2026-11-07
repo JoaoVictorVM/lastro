@@ -123,7 +123,12 @@ def test_consumer_facade_covers_active_run_events_artifacts_and_limits(
     active = store.get_active_run()
     assert active is not None and active.id == run_id
     assert active.mission_text == "Explore o cadastro"
-    assert active.config_snapshot["run_limits"] == {"max_actions": 40, "max_minutes": 30}
+    assert active.config_snapshot["run_limits"] == {
+        "max_actions": 40,
+        "max_minutes": 30,
+        "max_attempts": 3,
+        "max_no_progress_actions": 10,
+    }
     call = store.append_event(
         run_id,
         EventType.TOOL_CALL,

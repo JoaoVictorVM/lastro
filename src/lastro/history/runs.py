@@ -96,15 +96,11 @@ def _read_mission_file(path: Path) -> bytes:
 
 
 def config_snapshot(context: ProjectContext) -> JsonObject:
-    """Configuração efetiva da run, sem credenciais e com os limites preservados."""
+    """Configuração efetiva da run, sem credenciais e com os quatro limites materializados."""
     profile = context.profile.model_dump(
         mode="json", exclude={"credentials", "run_limits", "native"}
     )
-    run_limits: JsonObject = {
-        key: redact_text(value) if isinstance(value, str) else value
-        for key, value in context.profile.run_limits.items()
-        if isinstance(value, str | int | float)
-    }
+    run_limits: JsonObject = {**context.profile.run_limits.snapshot()}
     snapshot: JsonObject = {
         "project_id": context.require_project_id(),
         "profile": context.profile_name,

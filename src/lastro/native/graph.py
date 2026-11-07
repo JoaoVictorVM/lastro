@@ -108,6 +108,10 @@ class NativeAgent:
         record = self.history.get_run(self.run_id)
         if record.status.is_terminal:
             return record.status.value, record.status_reason or ""
+        # Parada já decidida pelo owner: nenhuma nova chamada paga enquanto ele finaliza.
+        state = self.history.execution_state(self.run_id)
+        if state.stop_status is not None and state.stop_reason is not None:
+            return state.stop_status, state.stop_reason
         return None
 
     async def think(

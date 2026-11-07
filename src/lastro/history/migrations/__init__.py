@@ -21,6 +21,7 @@ from lastro.history.migrations import (
     v007_persistent_memory,
     v008_native_executor,
     v009_change_context,
+    v010_execution_control,
 )
 from lastro.timeutil import utc_now_iso
 
@@ -60,6 +61,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration.from_module(v007_persistent_memory),
     Migration.from_module(v008_native_executor),
     Migration.from_module(v009_change_context),
+    Migration.from_module(v010_execution_control),
 )
 
 

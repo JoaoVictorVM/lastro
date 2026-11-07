@@ -2,11 +2,12 @@
 
 from dataclasses import dataclass
 
+from lastro.config.limits import DEFAULT_MAX_MINUTES, RunLimits, limits_from_snapshot
 from lastro.mission.models import AffectedFlow, CharterInput, Heuristic
 
 DEFAULT_TIMEBOX_MINUTES = 20
 # Sem limite configurado na run, o time box segue o limite padrão de 30 minutos do produto.
-DEFAULT_MAX_TIMEBOX_MINUTES = 30
+DEFAULT_MAX_TIMEBOX_MINUTES = DEFAULT_MAX_MINUTES
 
 
 @dataclass(frozen=True)
@@ -35,11 +36,11 @@ class Charter:
         return data
 
 
-def timebox_limit(run_limits: dict[str, object]) -> int:
-    value = run_limits.get("max_minutes")
-    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-        return value
-    return DEFAULT_MAX_TIMEBOX_MINUTES
+def timebox_limit(run_limits: RunLimits | object) -> int:
+    """Duração máxima pelo contrato tipado; snapshots legados normalizam só em memória."""
+    if isinstance(run_limits, RunLimits):
+        return run_limits.max_minutes
+    return limits_from_snapshot(run_limits).max_minutes
 
 
 def prioritized(flows: list[AffectedFlow]) -> tuple[str, ...]:

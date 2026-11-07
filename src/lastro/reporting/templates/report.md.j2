@@ -251,6 +251,30 @@ None.
 None.
 {% endfor %}
 
+{% if report.execution and not public %}
+{% set execution = report.execution %}
+## Execution limits and pending work
+
+- Actions used: {{ execution.actions_used }}/{{ execution.max_actions }}; duration limit {{ execution.max_minutes }} min; attempts per operation {{ execution.max_attempts }}; no-progress window {{ execution.max_no_progress_actions }}
+{% if execution.stop_reason %}
+- Stopped: {{ execution.stop_status }} ({{ execution.stop_reason }}); writes were locked at the stop
+{% endif %}
+{% if execution.parent_run_id %}
+- Resumed from run {{ execution.parent_run_id | code }}
+{% endif %}
+{% for item in execution.reconciliations %}
+- Resume check {{ item.source_write_id | code }}: {{ item.state }}, write repeated: no. {{ item.reason | inline }}{% if item.evidence_artifact_id %} (evidence {{ item.evidence_artifact_id | code }}){% endif %}
+
+{% endfor %}
+
+{% for item in execution.pending %}
+- {{ item.kind }} {{ item.reference | code }}: {{ item.state }}{% if item.requires_manual_review %} (manual review){% endif %}{% if item.detail %}. {{ item.detail | inline }}{% endif %}{% if item.run_id %} (run {{ item.run_id | code }}){% endif %}
+
+{% else %}
+- No pending items.
+{% endfor %}
+
+{% endif %}
 ## Created records and cleanup
 
 {% if report.created_records %}

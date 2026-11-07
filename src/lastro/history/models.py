@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
 if TYPE_CHECKING:
+    from lastro.execution.models import ExecutionState, PendingItem, Reconciliation
     from lastro.history.native import NativeUsage
 
 from lastro.knowledge.models import MemoryOutcome
@@ -87,6 +88,10 @@ class EventType(StrEnum):
     CHANGE_CONTEXT_COLLECTED = "change_context_collected"
     SECURITY_EVENT = "security_event"
     VERSION_OBSERVED = "version_observed"
+    EXECUTION_WARNING = "execution_warning"
+    CANCELLATION_REQUESTED = "cancellation_requested"
+    WRITE_RECONCILED = "write_reconciled"
+    RUN_RESUMED = "run_resumed"
 
 
 # Somente o registro abre e fecha a run; consumidores não anexam esses dois tipos.
@@ -701,6 +706,11 @@ class ReportInputs:
     change_context: ChangeContextRecord | None = None
     issue_snapshot: IssueSnapshotRecord | None = None
     version_observations: tuple[JsonObject, ...] = ()
+    # Controle de execução; None em runs que nunca registraram ação nem retomada.
+    execution: "ExecutionState | None" = None
+    pending_items: "tuple[PendingItem, ...]" = ()
+    parent_run_id: str | None = None
+    reconciliations: "tuple[Reconciliation, ...]" = ()
 
 
 APPROVAL_TTL_SECONDS = 900

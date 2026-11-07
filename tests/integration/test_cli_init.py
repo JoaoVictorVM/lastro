@@ -128,7 +128,7 @@ tenant_display_name = "ACME Matriz"
 allowed_entities = ["employee", "department"]
 denied_methods = ["DELETE", "PATCH"]
 denied_endpoint_patterns = ["/admin/*"]
-run_limits = { max_actions = 40, max_minutes = 30, mode = "strict" }
+run_limits = { max_actions = 40, max_minutes = 30, max_attempts = 2 }
 
 [profiles.homolog.credentials]
 username_env = "HOMOLOG_USERNAME"

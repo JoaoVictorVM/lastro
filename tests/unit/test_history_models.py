@@ -67,6 +67,10 @@ def test_event_and_value_enums_are_stable() -> None:
         "change_context_collected",
         "security_event",
         "version_observed",
+        "execution_warning",
+        "cancellation_requested",
+        "write_reconciled",
+        "run_resumed",
     ]
     assert {decision.value for decision in PolicyDecision} == {
         "allow",

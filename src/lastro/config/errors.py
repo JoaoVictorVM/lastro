@@ -25,6 +25,7 @@ _FIELD_EXPECTATIONS: tuple[tuple[str, str], ...] = (
     ("profiles.*.denied_endpoint_patterns", "list of endpoint patterns"),
     ("profiles.*.credentials.*", "environment variable name (text)"),
     ("profiles.*.credentials", "table with username_env and password_env"),
+    ("profiles.*.run_limits.*", "positive integer"),
     ("profiles.*.run_limits", "table of run limits"),
     ("profiles.*.target_url", "http or https URL with host"),
     ("profiles.*.login_url", "http or https URL with host"),

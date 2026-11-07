@@ -96,7 +96,10 @@ The browser session is saved as Playwright storage state at `<private data root>
 Every run is recorded in a SQLite database at `<private data root>/<project_id>/history.sqlite`, next to one folder per run under `runs/`. The `project_id` lives in `lastro.toml` and is shared by all profiles of the project. Projects created before it existed are migrated by running `lastro init` in the project folder: with a valid `lastro.toml` that has no `project_id`, it asks no questions, adds only that field, keeps every other value and exits successfully. Running it again later never changes an existing `project_id`.
 
 - `lastro --profile <name> run start --mission "..."` (or `--mission-file missions/<file>.md`) records the run before anything touches the target system and prints the run id and folder.
-- `lastro tail [run id]` follows the events of the active run, or of the given run.
+- `lastro tail [run id]` follows the events of the active run, or of the given run. Ctrl+C requests the cancellation of the followed run and waits for its partial report; a second Ctrl+C only stops waiting.
+- `lastro run cancel [run id]` stops the run: writes are locked at once, pending approvals are withdrawn and a partial report is built within 15 seconds.
+- `lastro run resume <run id>` continues an interrupted, cancelled or limit-stopped run in a new linked run with a fresh budget. Edits that may have been sent are checked against the real record first; an edit already applied is recorded as `already_applied` and never sent again.
+- Each profile limits duration, actions, attempts per operation and actions without progress (`[profiles.<name>.run_limits]`, defaults 30 minutes, 150, 3 and 10). See [docs/execution-limits.md](docs/execution-limits.md).
 - `lastro history list` lists past runs, with `--flow`, `--status`, `--issue`, `--profile`, `--since` (for example `7d`) and `--limit` (default 20).
 - `lastro backup <dest>` writes one zip archive with `manifest.json` and a `<project_id>/` folder holding `history.sqlite` and `runs/`. The database copy comes from SQLite's online backup API, so the archive has no `-wal` or `-shm` files. The archive is published only after it is complete, and an existing file is never overwritten. When `<dest>` is an existing folder, the archive gets a generated name.
 

@@ -22,6 +22,7 @@ from lastro.history.redaction import canonical_json, preview, redact_text
 from lastro.timeutil import to_display_zone
 
 POLL_INTERVAL_SECONDS = 0.5
+REPORT_WAIT_SECONDS = 5.0
 DESCRIPTION_LENGTH = 80
 NO_ACTIVE_RUN_MESSAGE = "Nenhuma run ativa neste projeto. Informe o id: lastro tail <run-id>"
 DECISION_COLORS = {
@@ -165,6 +166,61 @@ def native_line(event: EventRecord) -> str | None:
     return None
 
 
+def execution_line(event: EventRecord) -> str | None:
+    """Avisos, limites e cancelamento em linguagem direta, sem conteúdo do modelo."""
+    payload = event.payload
+    if event.event_type == EventType.EXECUTION_WARNING:
+        used, limit = _field(payload, "used"), _field(payload, "limit")
+        unit = "actions" if _field(payload, "dimension") == "actions" else "minutes"
+        return typer.style(
+            f"WARNING {_field(payload, 'message')} ({used}/{limit} {unit})",
+            fg=typer.colors.YELLOW,
+            bold=True,
+        )
+    if (
+        event.event_type == EventType.LIMIT_HIT
+        and isinstance(payload, dict)
+        and ("dimension" in payload or "superseded_by" in payload)
+    ):
+        if "superseded_by" in payload:
+            first = _field(payload, "superseded_by")
+            return f"limit signal {_field(payload, 'reason')} ignored (first: {first})"
+        return typer.style(
+            f"LIMIT {_field(payload, 'dimension')} "
+            f"({_field(payload, 'observed')}/{_field(payload, 'limit')}); writes locked",
+            fg=typer.colors.RED,
+            bold=True,
+        )
+    if event.event_type == EventType.CANCELLATION_REQUESTED:
+        return f"cancellation requested ({_field(payload, 'origin')}); writes locked"
+    if event.event_type == EventType.WRITE_RECONCILED:
+        return (
+            f"resume check {_field(payload, 'entity')} {_field(payload, 'record_id')}: "
+            f"{_field(payload, 'state')} (write repeated: no)"
+        )
+    if event.event_type == EventType.RUN_RESUMED:
+        return f"resumed from {_field(payload, 'parent_run_id')}"
+    return None
+
+
+def stop_summary(store: HistoryStore, run_id: str) -> list[str]:
+    """Linha final de runs paradas por limite ou cancelamento, com o relatório efetivo."""
+    from lastro.execution.models import LIMIT_REASONS, USER_CANCELLED, stop_message
+
+    record = store.get_run(run_id)
+    if record.status_reason not in LIMIT_REASONS | {USER_CANCELLED}:
+        return []
+    summary = store.execution_summary(run_id)
+    for _ in range(int(REPORT_WAIT_SECONDS / POLL_INTERVAL_SECONDS)):
+        if summary.report_path is not None:
+            break
+        sleep(POLL_INTERVAL_SECONDS)
+        summary = store.execution_summary(run_id)
+    path = str(store.run_dir(run_id) / summary.report_path) if summary.report_path else None
+    limit = summary.max_actions if record.status_reason == "action_limit" else None
+    return [stop_message(record.status_reason, limit, path)]
+
+
 def describe(event: EventRecord) -> str:
     if event.tool_name is not None:
         text = event.tool_name
@@ -184,6 +240,9 @@ def format_event(event: EventRecord, timezone: str) -> str:
         return f"{moment}  approval_decided  {approval_outcome(event, timezone)}"
     if event.event_type == EventType.NOTIFICATION_DEGRADED:
         return f"{moment}  {degraded_line(event)}"
+    execution = execution_line(event)
+    if execution is not None:
+        return f"{moment}  {event.event_type.value}  {execution}"
     native = native_line(event)
     if native is not None:
         return f"{moment}  {native}"
@@ -201,13 +260,40 @@ def format_event(event: EventRecord, timezone: str) -> str:
     return "  ".join(parts)
 
 
+def cancel_from_tail(store: HistoryStore, run_id: str) -> None:
+    """Primeiro Ctrl+C: cancelamento durável; segundo: sai com 130 e o pedido continua."""
+    from lastro.cli.run_cmd import INTERRUPTED_EXIT_CODE, print_stop
+    from lastro.execution.supervisor import stop_run
+
+    try:
+        if store.get_run(run_id).status.is_terminal:
+            return
+        output.info(
+            "Cancelling run; waiting for the partial report (Ctrl+C again to stop waiting)."
+        )
+        outcome = stop_run(store, run_id, origin="tail")
+    except KeyboardInterrupt:
+        output.info("Stopped waiting; the cancellation request stays active.")
+        raise typer.Exit(code=INTERRUPTED_EXIT_CODE) from None
+    except HistoryError as exc:
+        output.error(str(exc))
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    code = print_stop(outcome)
+    if code:
+        raise typer.Exit(code=code)
+
+
 def tail(
     ctx: typer.Context,
     run_id: Annotated[
         str | None, typer.Argument(help="Run a acompanhar; sem id, usa a run ativa.")
     ] = None,
 ) -> None:
-    """Acompanha os eventos da run atual. Ctrl+C encerra apenas o tail."""
+    """Acompanha os eventos da run atual.
+
+    Ctrl+C pede o cancelamento da run acompanhada e espera o relatório parcial (até 15 s);
+    um segundo Ctrl+C encerra só a espera, com o pedido mantido. Run já encerrada: só sai.
+    """
     state = get_state(ctx)
     loaded = state.require_history_config()
     store = state.open_history(loaded)
@@ -235,10 +321,14 @@ def tail(
                     typer.echo(BELL, nl=False)
                 cursor = event.sequence
             if finished:
+                for line in stop_summary(store, run_id):
+                    output.info(line)
                 return
             sleep(POLL_INTERVAL_SECONDS)
     except KeyboardInterrupt:
         output.info("")
+        if run_id is not None:
+            cancel_from_tail(store, run_id)
         return
     except HistoryError as exc:
         output.error(str(exc))

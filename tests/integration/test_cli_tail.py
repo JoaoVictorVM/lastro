@@ -95,20 +95,24 @@ def test_tail_colors_policy_decisions_only_on_terminal(
     assert ANSI.sub("", colored.stdout) == plain.stdout
 
 
-def test_ctrl_c_ends_only_the_tail(
+def test_ctrl_c_requests_cancellation_of_followed_run(
     runner: CliRunner, store: HistoryStore, run_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from lastro.execution import supervisor
+
     def interrupt(seconds: float) -> None:
         raise KeyboardInterrupt
 
     monkeypatch.setattr(tail_cmd, "sleep", interrupt)
+    monkeypatch.setattr(supervisor, "owner_alive", lambda store, record: False)
 
     result = runner.invoke(app, ["tail"])
 
     assert result.exit_code == 0, result.output
-    assert _event_types(result.stdout) == ["run_started"]
-    assert store.get_run(run_id).status == RunStatus.RUNNING
-    assert store.get_active_run() is not None
+    assert _event_types(result.stdout)[0] == "run_started"
+    assert "Run cancelled. Partial report:" in result.stdout
+    assert store.get_run(run_id).status == RunStatus.CANCELLED
+    assert store.get_active_run() is None
 
 
 def test_tail_without_active_run_explains_how_to_choose(
