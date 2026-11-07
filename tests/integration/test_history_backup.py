@@ -103,7 +103,7 @@ def test_backup_restored_manually_to_empty_folder_preserves_history_output(
     assert verify_restored_backup(restored_root) == []
     manifest = json.loads((restored_root / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["project_id"] == project_id
-    assert manifest["schema_version"] == 10
+    assert manifest["schema_version"] == 11
     restored_runs = restored_root / project_id / "runs"
     for summary in store.list_runs():
         assert (restored_runs / summary.record.id / "evidence").is_dir()

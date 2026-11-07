@@ -47,11 +47,25 @@
 {% endfor %}
 
 {% endif %}
+{% if item.verdict %}
+**Reproduction verdict:** {{ item.verdict.label }}
+
+- Observed frequency: {{ item.verdict.reproduced_count }} of {{ item.verdict.attempts_decisive }} decisive attempts ({{ item.verdict.attempts_planned }} planned)
+- Explorer: {{ item.verdict.explorer_executor | inline }}; verifier: {{ item.verdict.verifier_executor | inline }}{% if item.verdict.cross_executor %} (cross-executor){% else %} (same executor){% endif %}
+
+{% if item.verdict.missing_precondition %}
+- Missing precondition: {{ item.verdict.missing_precondition | inline }}
+{% endif %}
+{% for note in item.verdict.notes %}
+- {{ note | inline }}
+{% endfor %}
+
+{% endif %}
 {% if item.reproduction_attempts %}
 **Reproduction attempts**
 
 {% for attempt in item.reproduction_attempts %}
-- {{ attempt.outcome }} by {{ attempt.executor | inline }} at {{ attempt.attempted_at }}{% if not public %} (run {{ attempt.child_run_id | code }}){% endif %}
+- {{ attempt.outcome }}{% if attempt.reason %} ({{ attempt.reason }}){% endif %} by {{ attempt.executor | inline }} at {{ attempt.attempted_at }}{% if not public %} (run {{ attempt.child_run_id | code }}){% endif %}
 
 {% endfor %}
 

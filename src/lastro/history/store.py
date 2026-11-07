@@ -33,7 +33,7 @@ from lastro.execution.models import (
     WriteIntent,
     WriteIntentInput,
 )
-from lastro.history import approvals, execution, knowledge, native
+from lastro.history import approvals, execution, knowledge, native, reproduction
 from lastro.history.artifacts import (
     StoredFile,
     insert_artifact,
@@ -119,6 +119,7 @@ from lastro.history.models import (
     ApprovalStatus,
     ArtifactRecord,
     ArtifactType,
+    AttemptDetail,
     ChangeContextRecord,
     Clarification,
     CleanupResult,
@@ -154,8 +155,15 @@ from lastro.history.models import (
     ReportInputs,
     ReportKind,
     ReportSnapshot,
+    ReproducerReport,
+    ReproducerResult,
     ReproductionAttempt,
+    ReproductionChild,
     ReproductionOutcome,
+    ReproductionRound,
+    ReproductionStatus,
+    ReproductionVerdict,
+    RoundStatus,
     RunFilter,
     RunPaths,
     RunRecord,
@@ -163,6 +171,7 @@ from lastro.history.models import (
     RunSummary,
     SnapshotStatus,
     SourceFileRecord,
+    VerdictInput,
 )
 from lastro.history.oracles import record_signal, select_signals
 from lastro.history.processes import ProcessChecker, process_exists
@@ -340,12 +349,16 @@ class HistoryStore:
         prepared: PreparedContext | None = None,
         executor_snapshot: JsonObject | None = None,
         parent_run_id: str | None = None,
+        reproduction_of: tuple[str, str, int] | None = None,
     ) -> CreatedRun:
         """Cria e confirma a run, a missão e run_started antes de publicar o ponteiro ativo.
 
         Ao retornar, a run já é durável; só então qualquer interação com o sistema alvo pode
         começar. Snapshot da issue, contexto de mudança, fontes e eventos de segurança entram na
         mesma transação: ou tudo é confirmado, ou nada referencia a run.
+
+        `reproduction_of` (rodada, finding, ordinal) cria uma run filha de reprodução, com o
+        vínculo gravado na mesma transação; ela nunca é tratada como retomada.
         """
         validated = validate_mission(mission)
         issue_capture = prepared.issue if prepared is not None else None
@@ -420,6 +433,11 @@ class HistoryStore:
                 insert_run(conn, final)
                 if parent_run_id is not None:
                     execution.insert_link(conn, run_id, parent_run_id, started_at)
+                if reproduction_of is not None:
+                    round_id, finding_id, ordinal = reproduction_of
+                    reproduction.insert_child(
+                        conn, run_id, round_id, finding_id, ordinal, started_at
+                    )
                 if stored is not None:
                     insert_artifact(conn, run_id, stored, ArtifactType.SNAPSHOT, started_at)
                 insert_event(conn, run_id, started, started_at)
@@ -1332,6 +1350,145 @@ class HistoryStore:
         timestamp = self._now()
         return self._database.write(lambda conn: promote(conn, finding_id, timestamp))
 
+    def start_reproduction_round(
+        self,
+        run_id: str,
+        *,
+        mode: str,
+        explorer: str,
+        verifier: str,
+        finding_ids: list[str],
+    ) -> ReproductionRound:
+        """Abre ou assume a rodada da run terminal e registra reproduction_started no seu log."""
+        timestamp = self._now()
+
+        def write(conn: sqlite3.Connection) -> ReproductionRound:
+            self._check_run(conn, run_id)
+            opened = reproduction.open_round(
+                conn,
+                run_id,
+                mode=mode,
+                explorer=explorer,
+                verifier=verifier,
+                owner_pid=self.owner_pid,
+                alive=self._process_checker,
+                timestamp=timestamp,
+            )
+            reproduction.append_reproduction_event(
+                conn,
+                run_id,
+                EventType.REPRODUCTION_STARTED,
+                {
+                    "round_id": opened.id,
+                    "count": len(finding_ids),
+                    "finding_ids": list[JsonValue](finding_ids),
+                    "mode": opened.mode,
+                    "explorer_executor": opened.explorer_executor,
+                    "verifier_executor": opened.verifier_executor,
+                    "resumed": opened.resumed,
+                },
+                timestamp,
+            )
+            return opened
+
+        return self._database.write(write)
+
+    def close_reproduction_round(
+        self, round_id: str, status: RoundStatus = RoundStatus.COMPLETED
+    ) -> ReproductionRound:
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: reproduction.close_round(conn, round_id, status, timestamp)
+        )
+
+    def reproduction_children(self, finding_id: str) -> list[ReproductionChild]:
+        return self._database.read(lambda conn: reproduction.select_children(conn, finding_id))
+
+    def reproduction_child(self, child_run_id: str) -> ReproductionChild | None:
+        return self._database.read(lambda conn: reproduction.select_child(conn, child_run_id))
+
+    def record_reproducer_report(
+        self,
+        child_run_id: str,
+        result: ReproducerResult,
+        evidence_artifact_ids: tuple[str, ...],
+        precondition_index: int | None,
+        note: str,
+    ) -> ReproducerReport:
+        """Relato do reprodutor, aceito uma vez por run filha ativa; não decide o resultado."""
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: reproduction.insert_report(
+                conn,
+                child_run_id,
+                result,
+                evidence_artifact_ids,
+                precondition_index,
+                note,
+                timestamp,
+            )
+        )
+
+    def reproducer_report(self, child_run_id: str) -> ReproducerReport | None:
+        return self._database.read(lambda conn: reproduction.select_report(conn, child_run_id))
+
+    def record_attempt_detail(self, detail: AttemptDetail) -> ReproductionAttempt:
+        """Tentativa interpretada pelo servidor e o evento correspondente na run explorada."""
+        timestamp = self._now()
+
+        def write(conn: sqlite3.Connection) -> ReproductionAttempt:
+            before = conn.execute(
+                "SELECT 1 FROM finding_reproduction_attempts WHERE finding_id = ? "
+                "AND ordinal = ? AND child_run_id = ?",
+                (detail.finding_id, detail.ordinal, detail.child_run_id),
+            ).fetchone()
+            attempt = reproduction.insert_attempt_detail(conn, detail, timestamp)
+            if before is None:
+                finding = select_finding(conn, detail.finding_id)
+                reproduction.append_reproduction_event(
+                    conn,
+                    finding.run_id,
+                    EventType.REPRODUCTION_ATTEMPT_FINISHED,
+                    {
+                        "finding_id": detail.finding_id,
+                        "ordinal": detail.ordinal,
+                        "child_run_id": detail.child_run_id,
+                        "outcome": attempt.outcome.value,
+                        "reason": attempt.reason.value if attempt.reason else None,
+                        "executor": attempt.executor,
+                    },
+                    timestamp,
+                )
+            return attempt
+
+        return self._database.write(write)
+
+    def settle_verdict(self, data: VerdictInput) -> ReproductionVerdict:
+        """Veredito imutável, promoção ou conclusão do finding e evento, numa transação curta."""
+        timestamp = self._now()
+        return self._database.write(lambda conn: reproduction.settle_verdict(conn, data, timestamp))
+
+    def get_reproduction_verdict(self, finding_id: str) -> ReproductionVerdict | None:
+        return self._database.read(lambda conn: reproduction.select_verdict(conn, finding_id))
+
+    def list_reproduction_verdicts(self, run_id: str) -> list[ReproductionVerdict]:
+        """Contrato estável de leitura: um veredito por finding reproduzido, em ordem de criação."""
+        return self._database.read(lambda conn: reproduction.select_verdicts(conn, run_id))
+
+    def reproduction_status(self, run_id: str) -> ReproductionStatus:
+        return self._database.read(lambda conn: reproduction.select_status(conn, run_id))
+
+    def eligible_findings(self, run_id: str) -> list[Finding]:
+        """Achados de sistema suspected sem veredito, prontos para uma rodada."""
+
+        def read(conn: sqlite3.Connection) -> list[Finding]:
+            return [
+                select_finding(conn, finding_id)
+                for finding_id in reproduction.eligible_findings(conn, run_id)
+            ]
+
+        return self._database.read(read)
+
     def check_criterion_result(self, run_id: str, draft: CriterionResultDraft) -> None:
         self._database.read(lambda conn: check_criterion_result(conn, run_id, draft))
 
@@ -1439,6 +1596,7 @@ class HistoryStore:
                 change_context=select_context(conn, run_id),
                 issue_snapshot=_run_snapshot(conn, run_id),
                 version_observations=tuple(select_version_observations(conn, run_id)),
+                verdicts=tuple(reproduction.select_verdicts(conn, run_id)),
                 **self._execution_inputs(conn, run_id),
             )
 

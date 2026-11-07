@@ -47,7 +47,7 @@ def test_upgrade_v009_preserves_events_and_foreign_keys(v9_history: tuple[Any, s
     with _connect(history.database_path) as conn:
         events = [tuple(row) for row in conn.execute("SELECT * FROM events ORDER BY id")]
 
-    assert apply_migrations(database) == [10]
+    assert apply_migrations(database) == [10, 11]
 
     with _connect(history.database_path) as conn:
         assert [tuple(row) for row in conn.execute("SELECT * FROM events ORDER BY id")] == events

@@ -6,6 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 from zoneinfo import ZoneInfo
 
 from lastro.config.loader import ProjectContext
@@ -38,6 +39,8 @@ from lastro.history.redaction import canonical_json, redact, redact_text
 RUN_ID_ENTROPY_BYTES = 2
 HANDOFF_BLOCK = "codex"
 HANDOFF_MARKER = "launch_pending"
+# Bloco do snapshot que marca a run filha de uma tentativa de reprodução.
+REPRODUCTION_CHILD_BLOCK = "reproduction_child"
 
 
 def new_run_id(now: datetime, timezone: str, entropy_hex: str) -> str:
@@ -98,7 +101,7 @@ def _read_mission_file(path: Path) -> bytes:
 def config_snapshot(context: ProjectContext) -> JsonObject:
     """Configuração efetiva da run, sem credenciais e com os quatro limites materializados."""
     profile = context.profile.model_dump(
-        mode="json", exclude={"credentials", "run_limits", "native"}
+        mode="json", exclude={"credentials", "run_limits", "native", "reproduction"}
     )
     run_limits: JsonObject = {**context.profile.run_limits.snapshot()}
     snapshot: JsonObject = {
@@ -108,6 +111,7 @@ def config_snapshot(context: ProjectContext) -> JsonObject:
         "executor": context.config.executor,
         "environment": redact(profile),
         "run_limits": run_limits,
+        "reproduction": cast(JsonObject, context.profile.reproduction.snapshot()),
     }
     if context.config.executor == "native":
         snapshot["native"] = native_snapshot(context)
