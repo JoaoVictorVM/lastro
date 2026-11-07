@@ -173,7 +173,12 @@ def test_snapshot_removes_credentials_and_keeps_run_limits(
     assert "credentials" not in text
     assert "HOMOLOG_USERNAME" not in text
     assert "HOMOLOG_PASSWORD" not in text
-    assert snapshot["run_limits"] == {"max_actions": 40, "max_minutes": 30}
+    assert snapshot["run_limits"] == {
+        "max_actions": 40,
+        "max_minutes": 30,
+        "max_attempts": 3,
+        "max_no_progress_actions": 10,
+    }
     assert snapshot["profile"] == "homolog"
     assert snapshot["project_id"] == history_context.require_project_id()
     environment = snapshot["environment"]

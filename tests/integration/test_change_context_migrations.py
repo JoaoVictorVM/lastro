@@ -81,7 +81,7 @@ def test_upgrade_v008_preserves_runs_events_and_foreign_keys(
         before = _counts(conn)
         event_ids = [row[0] for row in conn.execute("SELECT id FROM events ORDER BY id")]
 
-    assert apply_migrations(database) == [9]
+    assert apply_migrations(database, MIGRATIONS[:9]) == [9]
 
     with _connect(history.database_path) as conn:
         assert _counts(conn) == before

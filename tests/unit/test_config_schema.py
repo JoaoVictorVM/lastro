@@ -125,14 +125,21 @@ def test_version_endpoint_accepts_path_or_url() -> None:
         assert config.profiles["h"].version_endpoint == endpoint
 
 
-def test_run_limits_accept_basic_types_only() -> None:
-    limits = {"max_steps": 50, "max_minutes": 1.5, "headless": True, "mode": "safe"}
-    config = LastroConfig.model_validate({"profiles": {"h": _profile(run_limits=limits)}})
-    assert config.profiles["h"].run_limits == limits
+def test_run_limits_are_typed_with_defaults() -> None:
+    config = LastroConfig.model_validate(
+        {"profiles": {"h": _profile(run_limits={"max_actions": 50})}}
+    )
+    limits = config.profiles["h"].run_limits
+    assert limits.snapshot() == {
+        "max_minutes": 30,
+        "max_actions": 50,
+        "max_attempts": 3,
+        "max_no_progress_actions": 10,
+    }
 
     with pytest.raises(ValidationError) as excinfo:
-        LastroConfig.model_validate({"profiles": {"h": _profile(run_limits={"x": [1]})}})
-    assert ("profiles", "h", "run_limits") in _locs(excinfo.value)
+        LastroConfig.model_validate({"profiles": {"h": _profile(run_limits={"x": 1})}})
+    assert ("profiles", "h", "run_limits", "x") in _locs(excinfo.value)
 
 
 def test_project_id_is_optional_and_canonical_when_present() -> None:

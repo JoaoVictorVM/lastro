@@ -105,7 +105,7 @@ def test_migrate_v004_database_to_v005(tmp_path: Path, history_context: ProjectC
         )
     )
 
-    assert apply_migrations(database) == [5, 6, 7, 8, 9]
+    assert apply_migrations(database) == [5, 6, 7, 8, 9, 10]
 
     with database.connection() as conn:
         legacy = conn.execute("SELECT * FROM findings WHERE id = 'legacy'").fetchone()

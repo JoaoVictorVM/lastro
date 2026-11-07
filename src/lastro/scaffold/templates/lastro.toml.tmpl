@@ -41,6 +41,18 @@ denied_methods = ["DELETE"]
 # Padrões de endpoints sempre bloqueados.
 denied_endpoint_patterns = []
 
+# Limites de cada run, aplicados pelo servidor de browser (inteiros positivos). Ao atingir
+# um limite, escritas são bloqueadas e a run termina com relatório parcial.
+[profiles.${profile_name}.run_limits]
+# Duração total em minutos, incluindo esperas por aprovação.
+max_minutes = 30
+# Chamadas de tools do agente (approval_status e end_run não contam).
+max_actions = 150
+# Tentativas totais da mesma operação que falha, incluindo a primeira.
+max_attempts = 3
+# Chamadas consecutivas sem evento, página, finding ou proposta nova.
+max_no_progress_actions = 10
+
 # Nomes das variáveis de ambiente com usuário e senha. Os valores ficam no .env.
 [profiles.${profile_name}.credentials]
 username_env = ${username_env}

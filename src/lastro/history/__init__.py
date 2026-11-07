@@ -3,6 +3,15 @@
 API pública consumida pela CLI e pelas demais features. Conexões SQLite e SQL ficam internos.
 """
 
+from lastro.execution.models import (
+    ExecutionState,
+    ExecutionSummary,
+    PendingItem,
+    Reconciliation,
+    ReconciliationState,
+    WriteIntent,
+    WriteIntentInput,
+)
 from lastro.history.backup import BackupResult, ManifestEntry, verify_restored_backup
 from lastro.history.database import LOCK_RETRY_DELAYS, LOCK_TIMEOUT_SECONDS, RetryPolicy
 from lastro.history.errors import (
@@ -191,6 +200,8 @@ __all__ = [
     "EventType",
     "EvidencePurpose",
     "EvidenceReference",
+    "ExecutionState",
+    "ExecutionSummary",
     "ExecutorInfo",
     "ExpectedSource",
     "FailureDomain",
@@ -231,12 +242,15 @@ __all__ = [
     "NotificationStatus",
     "OracleOccurrence",
     "OracleSignal",
+    "PendingItem",
     "PlanCriterion",
     "PlanGap",
     "PlanStatus",
     "PlanSubmission",
     "PolicyDecision",
     "ProcessChecker",
+    "Reconciliation",
+    "ReconciliationState",
     "ReportConflictError",
     "ReportInputs",
     "ReportKind",
@@ -260,6 +274,8 @@ __all__ = [
     "SourceFileRecord",
     "TextMission",
     "UnsafeArtifactPathError",
+    "WriteIntent",
+    "WriteIntentInput",
     "can_transition",
     "no_pending_approval_message",
     "open_history",

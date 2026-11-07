@@ -18,6 +18,7 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
+from lastro.config.limits import RunLimits
 from lastro.config.native import NativeSettings
 from lastro.config.policy import BrowserPolicy, safe_path
 from lastro.config.source import SourceSettings
@@ -109,18 +110,6 @@ def _version_endpoint(value: str) -> str:
     raise PydanticCustomError(
         "lastro_version_endpoint", "expected path starting with / or http(s) URL"
     )
-
-
-def _scalar_values(value: dict[str, object]) -> dict[str, object]:
-    # As chaves definitivas dos limites de run ainda não existem; só tipos básicos são aceitos.
-    invalid = sorted(key for key, item in value.items() if not isinstance(item, int | float | str))
-    if invalid:
-        raise PydanticCustomError(
-            "lastro_run_limits",
-            "expected table of numbers, booleans or text (invalid keys: {keys})",
-            {"keys": ", ".join(invalid)},
-        )
-    return value
 
 
 def _json_path(value: str) -> str:
@@ -289,9 +278,7 @@ class Profile(BaseModel):
     editable_fields: dict[str, list[NonEmptyText]] = Field(default_factory=dict[str, list[str]])
     denied_methods: list[HttpMethod] = Field(default_factory=lambda: ["DELETE"])
     denied_endpoint_patterns: list[NonEmptyText] = Field(default_factory=list[str])
-    run_limits: Annotated[dict[str, object], AfterValidator(_scalar_values)] = Field(
-        default_factory=dict[str, object]
-    )
+    run_limits: RunLimits = Field(default_factory=RunLimits)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     policy: BrowserPolicy = Field(default_factory=BrowserPolicy)
     oracles: OracleSettings = Field(default_factory=OracleSettings)

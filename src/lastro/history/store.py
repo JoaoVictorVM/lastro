@@ -4,6 +4,7 @@ Nenhuma conexão SQLite nem SQL atravessa esta fronteira: entradas e saídas sã
 """
 
 import contextlib
+import copy
 import dataclasses
 import os
 import secrets
@@ -17,7 +18,21 @@ from lastro import get_version
 from lastro.change_context.models import ChangeContextDraft, PreparedContext
 from lastro.change_context.versions import version_match
 from lastro.config.loader import LoadedConfig, ProjectContext
-from lastro.history import approvals, knowledge, native
+from lastro.execution.models import (
+    USER_CANCELLED,
+    ActionOutcome,
+    ExecutionState,
+    ExecutionSummary,
+    Notice,
+    PendingItem,
+    Reconciliation,
+    ReconciliationState,
+    Reservation,
+    StopLatch,
+    WriteIntent,
+    WriteIntentInput,
+)
+from lastro.history import approvals, execution, knowledge, native
 from lastro.history.artifacts import (
     StoredFile,
     insert_artifact,
@@ -57,6 +72,7 @@ from lastro.history.errors import (
     LaunchClaimError,
     MissionPlanError,
     RunNotActiveError,
+    RunNotFoundError,
 )
 from lastro.history.events import (
     PreparedEvent,
@@ -322,6 +338,7 @@ class HistoryStore:
         executed_system_version: str | None = None,
         prepared: PreparedContext | None = None,
         executor_snapshot: JsonObject | None = None,
+        parent_run_id: str | None = None,
     ) -> CreatedRun:
         """Cria e confirma a run, a missão e run_started antes de publicar o ponteiro ativo.
 
@@ -400,6 +417,8 @@ class HistoryStore:
                 elif record.issue_snapshot_id is not None:
                     select_snapshot(conn, record.issue_snapshot_id, self.project_id)
                 insert_run(conn, final)
+                if parent_run_id is not None:
+                    execution.insert_link(conn, run_id, parent_run_id, started_at)
                 if stored is not None:
                     insert_artifact(conn, run_id, stored, ArtifactType.SNAPSHOT, started_at)
                 insert_event(conn, run_id, started, started_at)
@@ -430,6 +449,21 @@ class HistoryStore:
                         manifest_artifact_id=manifest_id,
                         source_artifacts=artifact_ids,
                         timestamp=started_at,
+                    )
+                if parent_run_id is not None:
+                    pending = [
+                        item.as_json()
+                        for item in execution.pending_items(conn, self.project_id, run_id)
+                        if item.kind == "write"
+                    ]
+                    insert_event(
+                        conn,
+                        run_id,
+                        prepare_event(
+                            EventType.RUN_RESUMED,
+                            payload={"parent_run_id": parent_run_id, "pending_writes": pending},
+                        ),
+                        started_at,
                     )
                 return select_run(conn, run_id)
 
@@ -1526,6 +1560,189 @@ class HistoryStore:
     def reconcile_model_calls(self) -> list[str]:
         timestamp = self._now()
         return self._database.write(lambda conn: native.reconcile_terminal(conn, timestamp))
+
+    # Controle de execução ----------------------------------------------------------------------
+
+    def with_retry_budget(self, seconds: float) -> "HistoryStore":
+        """Mesma fachada com espera de lock limitada ao tempo restante de um deadline.
+
+        Não altera a política global: só o caminho de encerramento usa a cópia.
+        """
+        bounded = Database(
+            self._database.path, RetryPolicy(timeout_seconds=max(0.05, seconds), delays=())
+        )
+        clone = copy.copy(self)
+        clone._database = bounded
+        return clone
+
+    def _check_run(self, conn: sqlite3.Connection, run_id: str) -> RunRecord:
+        record = select_run(conn, run_id)
+        if record.project_id != self.project_id:
+            raise RunNotFoundError(run_id)
+        return record
+
+    def execution_state(self, run_id: str) -> ExecutionState:
+        def read(conn: sqlite3.Connection) -> ExecutionState:
+            self._check_run(conn, run_id)
+            return execution.select_state(conn, run_id)
+
+        return self._database.read(read)
+
+    def reserve_action(
+        self, run_id: str, action_id: str, tool: str, operation_key: str | None = None
+    ) -> Reservation:
+        timestamp = self._now()
+
+        def write(conn: sqlite3.Connection) -> Reservation:
+            self._check_run(conn, run_id)
+            return execution.reserve(conn, run_id, action_id, tool, operation_key, timestamp)
+
+        return self._database.write(write)
+
+    def complete_action(
+        self,
+        run_id: str,
+        action_id: str,
+        *,
+        failed: bool = False,
+        result_code: str | None = None,
+        page: str | None = None,
+    ) -> ActionOutcome:
+        now = self._clock()
+
+        def write(conn: sqlite3.Connection) -> ActionOutcome:
+            self._check_run(conn, run_id)
+            return execution.complete(
+                conn, run_id, action_id, failed=failed, result_code=result_code, page=page, now=now
+            )
+
+        return self._database.write(write)
+
+    def warn_duration(self, run_id: str) -> Notice | None:
+        now = self._clock()
+        return self._database.write(lambda conn: execution.warn_duration(conn, run_id, now))
+
+    def latch_stop(
+        self, run_id: str, status: RunStatus | str, reason: str, *, origin: str = "owner"
+    ) -> StopLatch:
+        target = RunStatus(status).value
+        now = self._clock()
+
+        def write(conn: sqlite3.Connection) -> StopLatch:
+            self._check_run(conn, run_id)
+            return execution.latch(conn, run_id, target, reason, now, origin=origin)
+
+        return self._database.write(write)
+
+    def request_cancellation(self, run_id: str, origin: str = "cli") -> StopLatch:
+        """Pedido humano durável e idempotente; só o processo confiável o grava."""
+        return self.latch_stop(run_id, RunStatus.CANCELLED, USER_CANCELLED, origin=origin)
+
+    def prepare_write(self, data: WriteIntentInput) -> WriteIntent:
+        timestamp = self._now()
+
+        def write(conn: sqlite3.Connection) -> WriteIntent:
+            self._check_run(conn, data.run_id)
+            return execution.insert_intent(conn, data, timestamp)
+
+        return self._database.write(write)
+
+    def mark_write_sending(self, intent_id: str) -> WriteIntent:
+        timestamp = self._now()
+        return self._database.write(lambda conn: execution.mark_sending(conn, intent_id, timestamp))
+
+    def record_write_response(self, intent_id: str, status: int) -> WriteIntent:
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: execution.record_response(conn, intent_id, status, timestamp)
+        )
+
+    def mark_unknown_writes(self, run_id: str) -> list[WriteIntent]:
+        timestamp = self._now()
+        return self._database.write(lambda conn: execution.mark_unknown(conn, run_id, timestamp))
+
+    def list_write_intents(self, run_id: str) -> list[WriteIntent]:
+        return self._database.read(lambda conn: execution.select_intents(conn, run_id))
+
+    def parent_run(self, run_id: str) -> str | None:
+        return self._database.read(lambda conn: execution.select_parent(conn, run_id))
+
+    def unresolved_writes(self, run_id: str) -> list[WriteIntent]:
+        return self._database.read(lambda conn: execution.unresolved_writes(conn, run_id))
+
+    def reconcile_write(
+        self,
+        run_id: str,
+        source_write_id: str,
+        state: ReconciliationState,
+        reason: str,
+        *,
+        observation_artifact_id: str | None = None,
+    ) -> Reconciliation:
+        timestamp = self._now()
+
+        def write(conn: sqlite3.Connection) -> Reconciliation:
+            self._check_run(conn, run_id)
+            return execution.insert_reconciliation(
+                conn,
+                run_id,
+                source_write_id,
+                state,
+                reason,
+                timestamp,
+                observation_artifact_id=observation_artifact_id,
+            )
+
+        return self._database.write(write)
+
+    def link_replacement_write(self, run_id: str, source_write_id: str, replacement: str) -> None:
+        self._database.write(
+            lambda conn: execution.link_replacement(conn, run_id, source_write_id, replacement)
+        )
+
+    def list_reconciliations(self, run_id: str) -> list[Reconciliation]:
+        return self._database.read(lambda conn: execution.select_reconciliations(conn, run_id))
+
+    def pending_items(self, run_id: str) -> list[PendingItem]:
+        def read(conn: sqlite3.Connection) -> list[PendingItem]:
+            self._check_run(conn, run_id)
+            return execution.pending_items(conn, self.project_id, run_id)
+
+        return self._database.read(read)
+
+    def execution_summary(self, run_id: str) -> ExecutionSummary:
+        """Resumo durável consultável por consumidores futuros: motivo, uso e pendências."""
+
+        def read(conn: sqlite3.Connection) -> ExecutionSummary:
+            run = self._check_run(conn, run_id)
+            state = execution.select_state(conn, run_id)
+            pending = execution.pending_items(conn, self.project_id, run_id)
+            snapshots = [
+                item
+                for item in select_snapshots(conn, run_id)
+                if item.status in (SnapshotStatus.READY, SnapshotStatus.FALLBACK)
+            ]
+            latest = snapshots[-1] if snapshots else None
+            path: str | None = None
+            if latest is not None:
+                artifact_id = latest.report_artifact_id or latest.fallback_artifact_id
+                for artifact in list_artifacts(conn, run_id):
+                    if artifact.id == artifact_id:
+                        path = artifact.relative_path
+            return ExecutionSummary(
+                run_id=run_id,
+                status=run.status.value,
+                reason=run.status_reason,
+                actions_used=state.actions_reserved,
+                max_actions=state.max_actions,
+                max_minutes=state.max_minutes,
+                parent_run_id=execution.select_parent(conn, run_id),
+                pending_items=tuple(pending),
+                report_kind=latest.kind.value if latest is not None else None,
+                report_path=path,
+            )
+
+        return self._database.read(read)
 
     def list_runs(self, run_filter: RunFilter | None = None) -> list[RunSummary]:
         selected = run_filter or RunFilter()

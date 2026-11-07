@@ -87,6 +87,10 @@ class EventType(StrEnum):
     CHANGE_CONTEXT_COLLECTED = "change_context_collected"
     SECURITY_EVENT = "security_event"
     VERSION_OBSERVED = "version_observed"
+    EXECUTION_WARNING = "execution_warning"
+    CANCELLATION_REQUESTED = "cancellation_requested"
+    WRITE_RECONCILED = "write_reconciled"
+    RUN_RESUMED = "run_resumed"
 
 
 # Somente o registro abre e fecha a run; consumidores não anexam esses dois tipos.

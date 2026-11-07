@@ -50,7 +50,7 @@ def test_upgrade_v006_keeps_existing_data(tmp_path: Path, history_context: Proje
         )
     )
 
-    assert apply_migrations(database) == [7, 8, 9]
+    assert apply_migrations(database) == [7, 8, 9, 10]
 
     with database.connection() as conn:
         row = conn.execute("SELECT * FROM knowledge WHERE id = 'old'").fetchone()
