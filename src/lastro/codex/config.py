@@ -236,6 +236,8 @@ class SessionIdentity:
     private_root: Path
     codex_home: Path
     instructions: str
+    # Run filha de reprodução: a sessão habilita também a tool de resultado da tentativa.
+    reproduction: bool = False
 
 
 def pinned_server(policy: Mapping[str, Any], identity: SessionIdentity) -> dict[str, Any]:
@@ -254,6 +256,11 @@ def pinned_server(policy: Mapping[str, Any], identity: SessionIdentity) -> dict[
     ]
     server["cwd"] = str(identity.project_dir)
     server["env_vars"] = list(SERVER_ENV_VARS)
+    if identity.reproduction:
+        from lastro.reproduction.models import REPRODUCTION_TOOL
+
+        enabled = cast(list[str], server.get("enabled_tools") or tool_names())
+        server["enabled_tools"] = sorted({*enabled, REPRODUCTION_TOOL})
     return server
 
 

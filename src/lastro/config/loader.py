@@ -191,6 +191,17 @@ class ProjectContext:
         config = self.config.model_copy(update={"executor": executor})
         return ProjectContext(LoadedConfig(self.loaded.path, config), self.profile)
 
+    def for_reproduction(self) -> "ProjectContext":
+        """Contexto de uma tentativa: mesmas políticas, limites reduzidos ao teto de reprodução.
+
+        Quem cria a run filha e o servidor que a atende derivam o mesmo snapshot daqui.
+        """
+        limits = self.profile.reproduction.child_limits(self.profile.run_limits)
+        profile = self.profile.model_copy(update={"run_limits": limits})
+        profiles = {**self.config.profiles, self.profile.name: profile}
+        config = self.config.model_copy(update={"profiles": profiles})
+        return ProjectContext(LoadedConfig(self.loaded.path, config), profile)
+
 
 def load_config_file(explicit: Path | None, cwd: Path | None = None) -> LoadedConfig:
     path = resolve_config_path(explicit, cwd)

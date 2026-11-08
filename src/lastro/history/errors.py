@@ -110,6 +110,21 @@ class ReportingError(HistoryError):
         self.detail = detail
 
 
+REPRODUCTION_NOT_ELIGIBLE = "reproduction_not_eligible"
+REPRODUCTION_EXECUTOR_UNAVAILABLE = "reproduction_executor_unavailable"
+REPRODUCTION_CONFIG_INVALID = "reproduction_config_invalid"
+REPRODUCTION_ROUND_ACTIVE = "reproduction_round_active"
+
+
+class ReproductionError(HistoryError):
+    """Rodada de reprodução recusada ou estado imutável violado; code é estável para a CLI."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
 class ReportConflictError(HistoryError):
     """Um snapshot pronto difere das entradas atuais; o arquivo existente nunca é sobrescrito."""
 

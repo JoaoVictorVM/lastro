@@ -21,6 +21,7 @@ from pydantic_core import PydanticCustomError
 from lastro.config.limits import RunLimits
 from lastro.config.native import NativeSettings
 from lastro.config.policy import BrowserPolicy, safe_path
+from lastro.config.reproduction import ReproductionSettings
 from lastro.config.source import SourceSettings
 from lastro.config.testdata import TestDataSettings
 from lastro.oracles.ignore import OracleSettings
@@ -284,6 +285,7 @@ class Profile(BaseModel):
     oracles: OracleSettings = Field(default_factory=OracleSettings)
     test_data: TestDataSettings = Field(default_factory=TestDataSettings)
     native: NativeSettings = Field(default_factory=NativeSettings)
+    reproduction: ReproductionSettings = Field(default_factory=ReproductionSettings)
 
     @field_validator("denied_endpoint_patterns")
     @classmethod

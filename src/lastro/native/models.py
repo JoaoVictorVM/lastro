@@ -11,7 +11,13 @@ PREPARATION_TOOLS = frozenset(
 MEMORY_TOOLS = frozenset({"knowledge_query", "knowledge_revalidate", "end_run"})
 EFFECT_TOOLS = frozenset({"navigate", "click", "fill", "select", "submit"})
 RECORD_TOOLS = frozenset(
-    {"report_finding", "record_criterion_result", "record_test_check", "knowledge_propose"}
+    {
+        "report_finding",
+        "record_criterion_result",
+        "record_test_check",
+        "knowledge_propose",
+        "report_reproduction_result",
+    }
 )
 REFERENCE_KEYS = ("finding_id", "result_id", "check_id", "proposal_id", "plan_id")
 

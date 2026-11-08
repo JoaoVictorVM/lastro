@@ -104,6 +104,10 @@ def public_projection(data: ReportData, known: tuple[str, ...]) -> ReportData:
                 replace(attempt, child_run_id="", executor=clean(attempt.executor))
                 for attempt in item.reproduction_attempts
             ),
+            # Executores e frequência ficam; notas internas e pré-condição ausente não.
+            verdict=replace(item.verdict, notes=(), missing_precondition=None)
+            if item.verdict is not None
+            else None,
         )
 
     def criterion(item: CriterionView) -> CriterionView:

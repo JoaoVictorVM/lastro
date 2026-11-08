@@ -270,8 +270,8 @@ def test_v006_upgrades_v005_database_and_preserves_events(tmp_path: Path) -> Non
     )
     conn.close()
 
-    assert apply_migrations(database) == [6, 7, 8, 9, 10]
-    assert schema_version(database) == 10
+    assert apply_migrations(database) == [6, 7, 8, 9, 10, 11]
+    assert schema_version(database) == 11
 
     conn = sqlite3.connect(path, isolation_level=None)
     conn.execute("PRAGMA foreign_keys=ON")

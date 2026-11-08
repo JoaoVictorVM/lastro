@@ -7,7 +7,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from lastro.execution.models import FINALIZE_SECONDS, USER_CANCELLED
-from lastro.history import HistoryError, RunStatus
+from lastro.history import HistoryError, HistoryStore, RunRecord, RunStatus
 from lastro.reporting.builder import ReportBuilder
 
 if TYPE_CHECKING:
@@ -166,4 +166,15 @@ async def finalize(
     )
     if report.snapshot.error_text:
         result["report_error"] = report.snapshot.error_text
+    if not already_ended:
+        _detach_reproduction(runtime, history, record)
     return result
+
+
+def _detach_reproduction(runtime: "BrowserTools", history: HistoryStore, record: RunRecord) -> None:
+    """claude-code não tem processo de CLI depois do fim: o owner inicia a reprodução."""
+    from lastro.reproduction.trigger import detach_after_owner
+
+    with contextlib.suppress(Exception):
+        if history.eligible_findings(record.id):
+            detach_after_owner(runtime.project, record)

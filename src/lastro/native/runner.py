@@ -18,6 +18,7 @@ from lastro.browser.control import request_termination
 from lastro.config.loader import ProjectContext
 from lastro.config.native import NativeSettings
 from lastro.history import (
+    REPRODUCTION_CHILD_BLOCK,
     HistoryError,
     HistoryStore,
     JsonValue,
@@ -239,7 +240,8 @@ class NativeRunner:
         except Exception:
             self.write("! MCP server did not start; see native-mcp.log in the run folder.")
             return await self.finish("blocked", "executor_configuration")
-        problems = compare_catalog(catalog, expected_catalog())
+        child = REPRODUCTION_CHILD_BLOCK in record.config_snapshot
+        problems = compare_catalog(catalog, expected_catalog(reproduction=child))
         if problems:
             self.write("! tool catalog differs from the Lastro contract: " + "; ".join(problems))
             return await self.finish("blocked", "executor_configuration")

@@ -92,11 +92,22 @@ class EventType(StrEnum):
     CANCELLATION_REQUESTED = "cancellation_requested"
     WRITE_RECONCILED = "write_reconciled"
     RUN_RESUMED = "run_resumed"
+    REPRODUCTION_STARTED = "reproduction_started"
+    REPRODUCTION_ATTEMPT_FINISHED = "reproduction_attempt_finished"
+    REPRODUCTION_VERDICT = "reproduction_verdict"
 
 
 # Somente o registro abre e fecha a run; consumidores não anexam esses dois tipos.
 LIFECYCLE_EVENTS = frozenset({EventType.RUN_STARTED, EventType.RUN_ENDED})
 CORRELATED_EVENTS = frozenset({EventType.TOOL_CALL, EventType.POLICY_DECISION})
+# Únicos tipos aceitos no log de uma run já terminal, gravados só pelo coordenador de reprodução.
+REPRODUCTION_EVENTS = frozenset(
+    {
+        EventType.REPRODUCTION_STARTED,
+        EventType.REPRODUCTION_ATTEMPT_FINISHED,
+        EventType.REPRODUCTION_VERDICT,
+    }
+)
 
 
 class PolicyDecision(StrEnum):
@@ -579,6 +590,8 @@ class FindingDraft:
     severity_suggestion: SeveritySuggestion | None = None
     origin: FindingOrigin = FindingOrigin.AGENT
     action_id: str | None = None
+    # Dica do explorador para planejar mais tentativas; a frequência vem sempre da reprodução.
+    intermittent: bool = False
 
 
 @dataclass(frozen=True)
@@ -590,6 +603,45 @@ class FindingEvidence:
     sha256: str
 
 
+class AttemptReason(StrEnum):
+    """Motivo de uma tentativa não decisiva; a ordem é a prioridade no veredito."""
+
+    BLOCKED = "blocked"
+    PRECONDITIONS = "preconditions"
+    BUDGET = "budget"
+    EXECUTOR = "executor"
+    DIVERGED = "diverged"
+    EVIDENCE = "evidence"
+
+
+class VerdictReason(StrEnum):
+    NOT_REPRODUCED = "not_reproduced"
+    BLOCKED = "blocked"
+    PRECONDITIONS = "preconditions"
+    BUDGET = "budget"
+    EXECUTOR = "executor"
+    DIVERGED = "diverged"
+    EVIDENCE = "evidence"
+
+
+class ReproducerResult(StrEnum):
+    """Enum fechado do relato do reprodutor; o servidor decide o resultado da tentativa."""
+
+    REPRODUCED = "reproduced"
+    NOT_REPRODUCED = "not_reproduced"
+    DIVERGED = "diverged"
+    PRECONDITION_MISSING = "precondition_missing"
+
+
+class RoundStatus(StrEnum):
+    OPEN = "open"
+    COMPLETED = "completed"
+    ABANDONED = "abandoned"
+
+
+MAX_REPRODUCTION_NOTE_LENGTH = 1000
+
+
 @dataclass(frozen=True)
 class ReproductionAttempt:
     id: str
@@ -599,6 +651,138 @@ class ReproductionAttempt:
     evidence_artifact_ids: tuple[str, ...]
     executor: str
     attempted_at: str
+    ordinal: int = 1
+    reason: AttemptReason | None = None
+    note: str = ""
+    precondition_index: int | None = None
+    verifier_executor: str = ""
+
+
+@dataclass(frozen=True)
+class AttemptDetail:
+    """Tentativa já interpretada pelo servidor, pronta para gravar."""
+
+    finding_id: str
+    child_run_id: str
+    ordinal: int
+    outcome: ReproductionOutcome
+    reason: AttemptReason | None
+    evidence_artifact_ids: tuple[str, ...]
+    note: str
+    precondition_index: int | None
+    executor: str
+
+
+@dataclass(frozen=True)
+class ReproductionRound:
+    id: str
+    run_id: str
+    mode: str
+    explorer_executor: str
+    verifier_executor: str
+    status: RoundStatus
+    owner_pid: int
+    created_at: str
+    closed_at: str | None
+    resumed: bool = False
+
+
+@dataclass(frozen=True)
+class ReproductionChild:
+    child_run_id: str
+    round_id: str
+    finding_id: str
+    ordinal: int
+    created_at: str
+
+
+@dataclass(frozen=True)
+class ReproducerReport:
+    child_run_id: str
+    result: ReproducerResult
+    evidence_artifact_ids: tuple[str, ...]
+    precondition_index: int | None
+    note: str
+    created_at: str
+
+
+def verdict_label(classification: str, reason: str | None, reproduced: int, decisive: int) -> str:
+    """Rótulo exibido no tail e no relatório; a frequência é observada pela reprodução."""
+    if classification == "confirmed":
+        if reproduced < decisive:
+            return f"confirmed ({reproduced}/{decisive}, intermittent)"
+        return f"confirmed ({reproduced}/{decisive})"
+    if reason == VerdictReason.NOT_REPRODUCED.value:
+        return "not reproduced"
+    return f"inconclusive ({reason})"
+
+
+@dataclass(frozen=True)
+class VerdictInput:
+    finding_id: str
+    round_id: str
+    attempts_planned: int
+    attempts_decisive: int
+    reproduced_count: int
+    classification: FindingClassification
+    reason: VerdictReason | None
+    missing_precondition: str | None
+    intermittent: bool
+    cross_executor: bool
+    explorer_executor: str
+    verifier_executor: str
+    notes: tuple[str, ...]
+
+    @property
+    def label(self) -> str:
+        return verdict_label(
+            self.classification.value,
+            self.reason.value if self.reason else None,
+            self.reproduced_count,
+            self.attempts_decisive,
+        )
+
+
+@dataclass(frozen=True)
+class ReproductionVerdict:
+    """Veredito imutável por finding; contrato estável de leitura para a avaliação."""
+
+    finding_id: str
+    run_id: str
+    round_id: str
+    attempts_planned: int
+    attempts_decisive: int
+    reproduced_count: int
+    classification: FindingClassification
+    reason: VerdictReason | None
+    missing_precondition: str | None
+    intermittent: bool
+    cross_executor: bool
+    explorer_executor: str
+    verifier_executor: str
+    notes: tuple[str, ...]
+    decided_at: str
+    content_sha256: str
+
+    @property
+    def label(self) -> str:
+        return verdict_label(
+            self.classification.value,
+            self.reason.value if self.reason else None,
+            self.reproduced_count,
+            self.attempts_decisive,
+        )
+
+
+@dataclass(frozen=True)
+class ReproductionStatus:
+    """Estado da reprodução de uma run explorada, lido pelo tail e pelo comando."""
+
+    run_id: str
+    open_round: ReproductionRound | None
+    eligible: int
+    verdicts: int
+    last_closed_at: str | None
 
 
 @dataclass(frozen=True)
@@ -628,6 +812,7 @@ class Finding:
     reproduction_attempts: tuple[ReproductionAttempt, ...]
     created_at: str
     updated_at: str
+    intermittent: bool = False
 
 
 @dataclass(frozen=True)
@@ -711,6 +896,7 @@ class ReportInputs:
     pending_items: "tuple[PendingItem, ...]" = ()
     parent_run_id: str | None = None
     reconciliations: "tuple[Reconciliation, ...]" = ()
+    verdicts: "tuple[ReproductionVerdict, ...]" = ()
 
 
 APPROVAL_TTL_SECONDS = 900

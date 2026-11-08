@@ -20,6 +20,8 @@ class ExecutorSpec:
     name: str
     external: ExternalRuntime | None = None
     install_hint: str = ""
+    # Pode rodar uma tentativa de reprodução sem terminal interativo.
+    headless: bool = True
 
     @property
     def embedded(self) -> bool:
@@ -36,6 +38,7 @@ EXECUTORS: dict[str, ExecutorSpec] = {
             instruction_file=Path("CLAUDE.md"),
             instruction_template="CLAUDE.md.tmpl",
         ),
+        install_hint="npm install -g @anthropic-ai/claude-code",
     ),
     "codex": ExecutorSpec(
         name="codex",

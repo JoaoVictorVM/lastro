@@ -18,6 +18,7 @@ from jinja2 import BaseLoader, Environment, PackageLoader, StrictUndefined
 from lastro.change_context.versions import version_match
 from lastro.history import (
     NOT_EVALUATED_REASON,
+    REPRODUCTION_CHILD_BLOCK,
     ArtifactRecord,
     ArtifactType,
     ClarificationStatus,
@@ -34,6 +35,8 @@ from lastro.history import (
     ReportInputs,
     ReportKind,
     ReportSnapshot,
+    ReproductionVerdict,
+    RunRecord,
     RunStatus,
     SnapshotStatus,
     unidentified_warning,
@@ -57,6 +60,7 @@ from lastro.reporting.models import (
     ReproductionView,
     SignalView,
     SummaryView,
+    VerdictView,
 )
 
 REPORT_PATHS = {
@@ -116,13 +120,27 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def report_path(kind: ReportKind, memory_revision: int) -> str:
-    """Recuperação da memória gera um relatório novo; o anterior nunca é sobrescrito."""
+def report_path(kind: ReportKind, memory_revision: int, verdicts: int = 0) -> str:
+    """Recuperação da memória ou novos vereditos geram um relatório novo; nada é sobrescrito."""
     base = REPORT_PATHS[kind]
-    if memory_revision <= 1:
-        return base
     stem = base.removesuffix(".md")
-    return f"{stem}.memory-r{memory_revision}.md"
+    if memory_revision > 1:
+        stem = f"{stem}.memory-r{memory_revision}"
+    if verdicts > 0:
+        stem = f"{stem}.reproduction-v{verdicts}"
+    return f"{stem}.md"
+
+
+def _strip_finding_defaults(item: dict[str, Any]) -> None:
+    """Achados sem veredito nem tag mantêm o digest anterior à reprodução."""
+    if item.get("verdict") is None:
+        item.pop("verdict", None)
+    if item.get("intermittent") is False:
+        item.pop("intermittent", None)
+    for attempt in cast(list[dict[str, Any]], item.get("reproduction_attempts") or []):
+        if attempt.get("ordinal") == 1 and attempt.get("reason") is None:
+            attempt.pop("ordinal", None)
+            attempt.pop("reason", None)
 
 
 def data_sha256(data: ReportData) -> str:
@@ -134,6 +152,9 @@ def data_sha256(data: ReportData) -> str:
         content.pop("change_context", None)
     if content.get("execution") is None:
         content.pop("execution", None)
+    for group in ("confirmed", "suspected", "harness_failures"):
+        for item in cast(list[dict[str, Any]], content.get(group) or []):
+            _strip_finding_defaults(item)
     return sha256_text(canonical(content))
 
 
@@ -272,8 +293,31 @@ def _evidence(
     )
 
 
+def _verdict_view(verdict: ReproductionVerdict | None) -> VerdictView | None:
+    if verdict is None:
+        return None
+    return VerdictView(
+        label=verdict.label,
+        classification=verdict.classification.value,
+        reason=verdict.reason.value if verdict.reason else None,
+        missing_precondition=verdict.missing_precondition,
+        attempts_planned=verdict.attempts_planned,
+        attempts_decisive=verdict.attempts_decisive,
+        reproduced_count=verdict.reproduced_count,
+        intermittent=verdict.intermittent,
+        cross_executor=verdict.cross_executor,
+        explorer_executor=verdict.explorer_executor,
+        verifier_executor=verdict.verifier_executor,
+        notes=verdict.notes,
+        decided_at=verdict.decided_at,
+    )
+
+
 def _finding_view(
-    finding: Finding, artifacts: dict[str, ArtifactRecord], present: dict[str, bool]
+    finding: Finding,
+    artifacts: dict[str, ArtifactRecord],
+    present: dict[str, bool],
+    verdict: ReproductionVerdict | None = None,
 ) -> FindingView:
     return FindingView(
         id=finding.id,
@@ -301,12 +345,19 @@ def _finding_view(
         limitations=finding.limitations,
         reproduction_attempts=tuple(
             ReproductionView(
-                item.child_run_id, item.outcome.value, item.executor, item.attempted_at
+                item.child_run_id,
+                item.outcome.value,
+                item.executor,
+                item.attempted_at,
+                item.ordinal,
+                item.reason.value if item.reason else None,
             )
             for item in finding.reproduction_attempts
         ),
         fingerprint=finding.fingerprint,
         created_at=finding.created_at,
+        intermittent=finding.intermittent,
+        verdict=_verdict_view(verdict),
     )
 
 
@@ -389,7 +440,10 @@ def project(
         for item in inputs.artifacts
         if item.artifact_type != ArtifactType.REPORT
     }
-    findings = [_finding_view(item, artifacts, present) for item in inputs.findings]
+    verdicts = {item.finding_id: item for item in inputs.verdicts}
+    findings = [
+        _finding_view(item, artifacts, present, verdicts.get(item.id)) for item in inputs.findings
+    ]
     system = [item for item in findings if item.failure_domain == FailureDomain.SYSTEM.value]
     results = {item.criterion_id: item for item in inputs.criterion_results}
     criteria: list[CriterionView] = []
@@ -465,6 +519,7 @@ def project(
     ]
     limitations += [MISSING_EVIDENCE.format(path=path) for path in missing]
     limitations += [f"{item.id}: {text}" for item in findings for text in item.limitations]
+    limitations += _reproduction_limitations(run, system)
     summary = SummaryView(
         status=run.status.value,
         status_reason=run.status_reason,
@@ -523,6 +578,34 @@ def project(
     )
 
 
+def _reproduction_limitations(run: RunRecord, system: list[FindingView]) -> list[str]:
+    """Pendência explícita: achados suspected sem veredito ainda não passaram pela reprodução."""
+    if REPRODUCTION_CHILD_BLOCK in run.config_snapshot or not run.status.is_terminal:
+        return []
+    pending = [
+        item for item in system if item.classification == "suspected" and item.verdict is None
+    ]
+    lines: list[str] = []
+    if pending:
+        lines.append(
+            f"Reproduction pending for {len(pending)} suspected finding(s): "
+            f"run `lastro run reproduce {run.id}`."
+        )
+    same = [
+        item.id
+        for item in system
+        if item.verdict is not None
+        and item.verdict.classification == "confirmed"
+        and not item.verdict.cross_executor
+    ]
+    if same:
+        lines.append(
+            "Confirmed findings were reproduced by the same executor as the explorer; "
+            "the verification is not executor-independent."
+        )
+    return lines
+
+
 @dataclass(frozen=True)
 class ReportOutcome:
     """Resultado operacional da geração; nunca altera o estado da run."""
@@ -577,7 +660,13 @@ class ReportBuilder:
         run_dir = self.history.run_dir(run_id)
         data = project(self.history.report_inputs(run_id), run_dir, kind, reason)
         digest = data_sha256(data)
-        target = report_path(kind, data.memory_revision)
+        verdicts = sum(
+            1
+            for group in (data.confirmed, data.suspected, data.harness_failures)
+            for item in group
+            if item.verdict is not None
+        )
+        target = report_path(kind, data.memory_revision, verdicts)
         paths = {item.id: item.relative_path for item in self.history.list_artifacts(run_id)}
         for existing in self.history.list_report_snapshots(run_id, kind):
             if existing.status == SnapshotStatus.READY:

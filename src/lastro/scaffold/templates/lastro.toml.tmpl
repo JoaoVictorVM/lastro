@@ -53,6 +53,22 @@ max_attempts = 3
 # Chamadas consecutivas sem evento, página, finding ou proposta nova.
 max_no_progress_actions = 10
 
+# Reprodução independente: cada finding suspected é repetido em runs filhas novas, sem o
+# raciocínio do explorador, antes de virar confirmed.
+[profiles.${profile_name}.reproduction]
+# Tentativas por finding (1 a 5) e para findings marcados intermittent (até 7).
+attempts = 2
+intermittent_attempts = 3
+# Teto de cada tentativa; vale o menor entre este valor e run_limits.
+max_minutes = 10
+max_actions = 50
+# same: mesmo executor do explorador. cross: o executor de verifiers, sempre diferente.
+mode = "same"
+# Pares explorador = verificador usados no modo cross, ex.: { claude-code = "codex" }.
+verifiers = {}
+# Reproduz automaticamente ao fim de uma run completed; false exige lastro run reproduce.
+auto = true
+
 # Nomes das variáveis de ambiente com usuário e senha. Os valores ficam no .env.
 [profiles.${profile_name}.credentials]
 username_env = ${username_env}

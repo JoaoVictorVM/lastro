@@ -20,6 +20,7 @@ from lastro.history.models import (
     NOT_EVALUATED_REASON,
     ArtifactRecord,
     ArtifactType,
+    AttemptReason,
     CriterionOutcome,
     CriterionResult,
     CriterionResultDraft,
@@ -127,7 +128,8 @@ def check_finding(conn: sqlite3.Connection, run_id: str, draft: FindingDraft) ->
         )
 
 
-def _attempt_from_row(row: sqlite3.Row) -> ReproductionAttempt:
+def attempt_from_row(row: sqlite3.Row) -> ReproductionAttempt:
+    reason = row["reason"]
     return ReproductionAttempt(
         id=row["id"],
         finding_id=row["finding_id"],
@@ -136,6 +138,11 @@ def _attempt_from_row(row: sqlite3.Row) -> ReproductionAttempt:
         evidence_artifact_ids=_texts(json.loads(row["evidence_json"])),
         executor=row["executor"],
         attempted_at=row["attempted_at"],
+        ordinal=row["ordinal"],
+        reason=AttemptReason(reason) if reason else None,
+        note=row["note"],
+        precondition_index=row["precondition_index"],
+        verifier_executor=row["verifier_executor"],
     )
 
 
@@ -153,7 +160,7 @@ def _finding_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> Finding:
     ).fetchall()
     attempts = conn.execute(
         "SELECT * FROM finding_reproduction_attempts WHERE finding_id = ? "
-        "ORDER BY attempted_at, id",
+        "ORDER BY ordinal, attempted_at, id",
         (row["id"],),
     ).fetchall()
     severity = _optional(data.get("severity_suggestion"))
@@ -189,9 +196,10 @@ def _finding_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> Finding:
         fingerprint=str(data["fingerprint"]),
         action_id=_optional(data.get("action_id")),
         version=row["version"],
-        reproduction_attempts=tuple(_attempt_from_row(item) for item in attempts),
+        reproduction_attempts=tuple(attempt_from_row(item) for item in attempts),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        intermittent=data.get("intermittent") is True,
     )
 
 
@@ -241,6 +249,8 @@ def insert_finding(
             if draft.severity_suggestion
             else None,
             "origin": draft.origin.value,
+            # Só entra no conteúdo quando marcado: achados anteriores mantêm a mesma identidade.
+            **({"intermittent": True} if draft.intermittent else {}),
         }
     )
     existing = conn.execute(
@@ -289,6 +299,7 @@ def insert_finding(
         "content_sha256": content.sha256,
         "action_id": draft.action_id,
         "event_id": event.id,
+        "intermittent": draft.intermittent,
     }
     conn.execute(
         "INSERT INTO findings (id, run_id, classification, payload_json, created_at, updated_at, "
@@ -354,7 +365,7 @@ def insert_reproduction_attempt(
     row = conn.execute(
         "SELECT * FROM finding_reproduction_attempts WHERE id = ?", (attempt_id,)
     ).fetchone()
-    return _attempt_from_row(row)
+    return attempt_from_row(row)
 
 
 def promote(conn: sqlite3.Connection, finding_id: str, timestamp: str) -> Finding:
@@ -373,6 +384,21 @@ def promote(conn: sqlite3.Connection, finding_id: str, timestamp: str) -> Findin
         )
     conn.execute(
         "UPDATE findings SET classification = 'confirmed', version = version + 1, "
+        "updated_at = ? WHERE id = ?",
+        (timestamp, finding_id),
+    )
+    return select_finding(conn, finding_id)
+
+
+def settle_inconclusive(conn: sqlite3.Connection, finding_id: str, timestamp: str) -> Finding:
+    """Transição interna suspected para inconclusive; nunca rebaixa um achado confirmado."""
+    finding = select_finding(conn, finding_id)
+    if finding.classification == FindingClassification.CONFIRMED:
+        raise ReportingError(CLASSIFICATION_NOT_ALLOWED, "A confirmed finding is never downgraded.")
+    if finding.classification == FindingClassification.INCONCLUSIVE:
+        return finding
+    conn.execute(
+        "UPDATE findings SET classification = 'inconclusive', version = version + 1, "
         "updated_at = ? WHERE id = ?",
         (timestamp, finding_id),
     )

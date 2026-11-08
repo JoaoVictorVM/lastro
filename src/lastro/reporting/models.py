@@ -105,6 +105,8 @@ class FindingInput(_Strict):
     )
     failure_domain: DomainField
     severity_suggestion: SeverityField | None = None
+    # Dica para planejar mais tentativas de reprodução; nunca define a frequência observada.
+    intermittent: bool = False
 
     @model_validator(mode="after")
     def _criterion_reference(self) -> Self:
@@ -132,6 +134,7 @@ class FindingInput(_Strict):
             failure_domain=self.failure_domain,
             severity_suggestion=self.severity_suggestion,
             action_id=action_id,
+            intermittent=self.intermittent,
         )
 
 
@@ -214,6 +217,27 @@ class ReproductionView:
     outcome: str
     executor: str
     attempted_at: str
+    ordinal: int = 1
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class VerdictView:
+    """Veredito da reprodução; a frequência r/d é observada, nunca declarada pelo explorador."""
+
+    label: str
+    classification: str
+    reason: str | None
+    missing_precondition: str | None
+    attempts_planned: int
+    attempts_decisive: int
+    reproduced_count: int
+    intermittent: bool
+    cross_executor: bool
+    explorer_executor: str
+    verifier_executor: str
+    notes: tuple[str, ...]
+    decided_at: str
 
 
 @dataclass(frozen=True)
@@ -239,6 +263,8 @@ class FindingView:
     reproduction_attempts: tuple[ReproductionView, ...]
     fingerprint: str
     created_at: str
+    intermittent: bool = False
+    verdict: VerdictView | None = None
 
 
 @dataclass(frozen=True)
