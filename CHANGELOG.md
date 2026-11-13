@@ -12,6 +12,11 @@ list the intended scope and contain no shipped changes until their release date 
 
 ### Added
 
+- Opt-in observability per profile with the `obs` extra: each run is exported as one
+  OpenTelemetry trace to Langfuse (one span per committed event, allowlisted and redacted
+  attributes, native model usage and cost per attempt, external executors marked as
+  unavailable), with recoverable delivery, `lastro obs up`, `lastro obs status`,
+  `lastro obs export`, `lastro report build` and a private trace link in reports.
 - Codex executor: `lastro init --executor codex`, `lastro run start --executor codex` and the
   supervised `lastro run launch`, using the Codex CLI login, the same tool server and bundle,
   effective isolation checks on every launch and `executor_limit` interruption.

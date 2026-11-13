@@ -46,6 +46,9 @@ _EVIDENCE_PATH = re.compile(r"\bevidence/[^\s)`|]+")
 _NUMERIC_SEGMENT = re.compile(r"(?<=/)\d+(?=/|$|\?)")
 
 
+TRACE_HEADING = "\n## Trace\n"
+
+
 def known_values(run: RunRecord, record_values: Iterable[str]) -> tuple[str, ...]:
     """Valores privados da run que precisam sumir também do texto livre."""
     environment = run.config_snapshot.get("environment")
@@ -158,6 +161,7 @@ def public_projection(data: ReportData, known: tuple[str, ...]) -> ReportData:
         ),
         # Contexto de mudança é privado: corpo da issue, código, diff, caminhos e commits.
         change_context=None,
+        trace=None,
         environment=replace(
             data.environment,
             environment_url="",
@@ -202,6 +206,15 @@ def _ready_source(history: HistoryStore, run_id: str) -> ReportSnapshot:
     )
 
 
+def strip_trace(text: str) -> str:
+    """Remove a seção da trace: mesmo em perfil público ela pode apontar para metadados privados."""
+    start = text.find(TRACE_HEADING)
+    if start < 0:
+        return text
+    following = text.find("\n## ", start + len(TRACE_HEADING))
+    return text[:start] + (text[following + 1 :] if following >= 0 else "")
+
+
 def export_public(history: HistoryStore, run_id: str) -> PublicExport:
     """Gera report.public.md uma única vez; repetir com o mesmo relatório reaproveita o arquivo."""
     source = _ready_source(history, run_id)
@@ -216,7 +229,7 @@ def export_public(history: HistoryStore, run_id: str) -> PublicExport:
     public_profile = is_public(run)
     builder = ReportBuilder(history)
     if public_profile:
-        text = (run_dir / original.relative_path).read_text(encoding="utf-8")
+        text = strip_trace((run_dir / original.relative_path).read_text(encoding="utf-8"))
     else:
         inputs = history.report_inputs(run_id)
         data = project(inputs, run_dir, source.kind, source.termination_reason)
