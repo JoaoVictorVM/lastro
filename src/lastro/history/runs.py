@@ -101,7 +101,8 @@ def _read_mission_file(path: Path) -> bytes:
 def config_snapshot(context: ProjectContext) -> JsonObject:
     """Configuração efetiva da run, sem credenciais e com os quatro limites materializados."""
     profile = context.profile.model_dump(
-        mode="json", exclude={"credentials", "run_limits", "native", "reproduction"}
+        mode="json",
+        exclude={"credentials", "run_limits", "native", "reproduction", "observability"},
     )
     run_limits: JsonObject = {**context.profile.run_limits.snapshot()}
     snapshot: JsonObject = {

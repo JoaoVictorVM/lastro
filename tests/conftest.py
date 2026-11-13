@@ -194,3 +194,55 @@ def gitleaks(monkeypatch: pytest.MonkeyPatch) -> str:
         pytest.skip("gitleaks não instalado")
     monkeypatch.setenv("PATH", str(Path(GITLEAKS).parent) + os.pathsep + os.environ["PATH"])
     return GITLEAKS
+
+
+# Valores fictícios montados em runtime: o scanner de segredos não deve ver um literal de chave.
+OBS_PUBLIC_SENTINEL = "-".join(("pk", "lf", "sentinel", "public"))
+OBS_SECRET_SENTINEL = "-".join(("sk", "lf", "sentinel", "secret"))
+OBS_PROJECT = "proj-lastro-test"
+
+
+def obs_block(name: str, base: str, *, enabled: bool = True) -> str:
+    return f"""
+[profiles.{name}.observability]
+enabled = {"true" if enabled else "false"}
+endpoint = "{base}/api/public/otel/v1/traces"
+ui_url = "{base}"
+langfuse_project_id = "{OBS_PROJECT}"
+"""
+
+
+@pytest.fixture
+def obs_project(
+    workdir: Path,
+    write_config: Callable[..., Path],
+    profile_toml: Callable[..., str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[..., ProjectContext]:
+    """Projeto com observabilidade habilitada em homolog e chaves sentinela no ambiente.
+
+    Chamar de novo com outros argumentos reescreve o lastro.toml (perfil atual relido).
+    """
+    root = workdir.parent / "private-root"
+    materialize_bundle(workdir)
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", OBS_PUBLIC_SENTINEL)
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", OBS_SECRET_SENTINEL)
+
+    def make(
+        base: str = "http://127.0.0.1:3000",
+        *,
+        enabled: bool = True,
+        profile: str = "homolog",
+        executor: str | None = None,
+    ) -> ProjectContext:
+        config_path = write_config(
+            f'project_id = "{PROJECT_ID}"\n'
+            f"private_data_root = '{root.as_posix()}'\n"
+            + profile_toml("homolog", extra=RUN_LIMITS)
+            + obs_block("homolog", base, enabled=enabled)
+            + profile_toml("local")
+        )
+        context = load_project(config_path, profile, cwd=workdir)
+        return context.with_executor(executor) if executor else context
+
+    return make

@@ -20,6 +20,7 @@ from pydantic_core import PydanticCustomError
 
 from lastro.config.limits import RunLimits
 from lastro.config.native import NativeSettings
+from lastro.config.observability import ObservabilitySettings
 from lastro.config.policy import BrowserPolicy, safe_path
 from lastro.config.reproduction import ReproductionSettings
 from lastro.config.source import SourceSettings
@@ -286,6 +287,7 @@ class Profile(BaseModel):
     test_data: TestDataSettings = Field(default_factory=TestDataSettings)
     native: NativeSettings = Field(default_factory=NativeSettings)
     reproduction: ReproductionSettings = Field(default_factory=ReproductionSettings)
+    observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
     @field_validator("denied_endpoint_patterns")
     @classmethod

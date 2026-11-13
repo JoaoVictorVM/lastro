@@ -53,7 +53,7 @@ def test_upgrade_v010_preserves_events_and_registers_checksum(
     with _connect(history.database_path) as conn:
         events = [tuple(row) for row in conn.execute("SELECT * FROM events ORDER BY id")]
 
-    assert apply_migrations(database) == [11]
+    assert apply_migrations(database) == [11, 12]
 
     with _connect(history.database_path) as conn:
         assert [tuple(row) for row in conn.execute("SELECT * FROM events ORDER BY id")] == events

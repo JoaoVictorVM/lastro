@@ -50,7 +50,7 @@ def test_upgrade_v006_keeps_existing_data(tmp_path: Path, history_context: Proje
         )
     )
 
-    assert apply_migrations(database) == [7, 8, 9, 10, 11]
+    assert apply_migrations(database) == [7, 8, 9, 10, 11, 12]
 
     with database.connection() as conn:
         row = conn.execute("SELECT * FROM knowledge WHERE id = 'old'").fetchone()
@@ -64,7 +64,7 @@ def test_upgrade_v006_keeps_existing_data(tmp_path: Path, history_context: Proje
         1,
     )
     assert (history["knowledge_id"], history["operation"]) == ("old", None)
-    assert schema_version(database) == 11
+    assert schema_version(database) == 12
 
 
 def test_new_rows_require_typed_fields(tmp_path: Path) -> None:
@@ -205,4 +205,4 @@ def test_backup_contains_memory_tables(knowledge: Any, tmp_path: Path) -> None:
         assert conn.execute("SELECT COUNT(*) FROM run_memory_outcomes").fetchone()[0] == 1
     finally:
         conn.close()
-    assert manifest["schema_version"] == 11
+    assert manifest["schema_version"] == 12
