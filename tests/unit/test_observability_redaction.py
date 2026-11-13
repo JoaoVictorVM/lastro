@@ -3,6 +3,9 @@ import os
 from typing import Any
 
 import httpx
+import pytest
+
+pytest.importorskip("opentelemetry.sdk.trace", reason="obs extra not installed")
 
 from lastro.config.observability import Destination
 from lastro.history.models import EventRecord, EventType, PolicyDecision

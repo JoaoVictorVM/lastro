@@ -30,6 +30,7 @@ def worker_for(
         run_id,
         settings_source(project),
         sender_factory=lambda *_: sender,
+        extra_available=lambda: True,
         **kwargs,
     )
 
