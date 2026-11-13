@@ -1,5 +1,6 @@
 """Receptor OTLP local e utilitários dos testes de observabilidade; nenhum serviço externo."""
 
+import contextlib
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -76,6 +77,13 @@ def partial_reply(rejected: int) -> Reply:
     return Reply(body=message.SerializeToString())
 
 
+class QuietServer(ThreadingHTTPServer):
+    """Sem traceback em stderr: ele vazaria para a saída capturada de outros testes."""
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        return None
+
+
 @contextmanager
 def otlp_receiver(replies: list[Reply] | None = None) -> Iterator[Receiver]:
     received: list[Received] = []
@@ -97,12 +105,14 @@ def otlp_receiver(replies: list[Reply] | None = None) -> Iterator[Receiver]:
                 self.send_header(key, value)
             self.send_header("content-length", str(len(reply.body)))
             self.end_headers()
-            self.wfile.write(reply.body)
+            # O cliente pode ter desistido por timeout; a resposta tardia não é erro do teste.
+            with contextlib.suppress(ConnectionError):
+                self.wfile.write(reply.body)
 
         def log_message(self, format: str, *args: Any) -> None:
             return None
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = QuietServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
