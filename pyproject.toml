@@ -31,6 +31,10 @@ native = [
     "anthropic>=2.4.0",
     "langgraph>=1.2.19",
 ]
+obs = [
+    "opentelemetry-exporter-otlp-proto-http>=1.45",
+    "opentelemetry-sdk>=1.45",
+]
 
 [build-system]
 requires = ["hatchling"]

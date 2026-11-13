@@ -132,6 +132,10 @@ The agent submits findings with `report_finding` (numbered steps, preconditions,
 
 A suspected finding only becomes `confirmed` after independent reproduction: when a run ends `completed`, Lastro replays each suspected finding in fresh child runs (2 attempts, 3 when tagged `intermittent`) that receive only its preconditions, steps and expected result, never the explorer's reasoning or observed result. The server decides each attempt from the child run's own evidence, policy decisions and limits, and records an immutable verdict such as `confirmed (2/2)`, `confirmed (1/3, intermittent)`, `not reproduced` or `inconclusive (blocked)`. `lastro run reproduce <run id>` runs or resumes a round on demand, and `mode = "cross"` verifies with a different executor than the explorer. See [docs/reproduction.md](docs/reproduction.md).
 
+## Observability
+
+With the optional `obs` extra, a profile can opt in to export each run as one OpenTelemetry trace to Langfuse, self-hosted with `lastro obs up` or on Langfuse Cloud. Spans mirror the committed events one to one (memory lookup, observation, action, policy evaluation, approval, verification, reproduction, consolidation), carry only allowlisted, redacted attributes and, for the native executor, model, tokens, latency and cost per attempt; external executors mark model data as unavailable. Export failures never change a run; pending spans are retried with `lastro obs export <run id>`, and private reports link to the trace. Observability is disabled by default and makes no network call when off. See [docs/observability.md](docs/observability.md).
+
 ## Roadmap
 
 Each release adds one capability and ends with a measurable result.

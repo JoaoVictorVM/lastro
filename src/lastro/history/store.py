@@ -19,6 +19,7 @@ from lastro import get_version
 from lastro.change_context.models import ChangeContextDraft, PreparedContext
 from lastro.change_context.versions import version_match
 from lastro.config.loader import LoadedConfig, ProjectContext
+from lastro.config.observability import EvaluationTraceContext, ObservabilityContextInput
 from lastro.execution.models import (
     USER_CANCELLED,
     ActionOutcome,
@@ -34,6 +35,7 @@ from lastro.execution.models import (
     WriteIntentInput,
 )
 from lastro.history import approvals, execution, knowledge, native, reproduction
+from lastro.history import observability as obs
 from lastro.history.artifacts import (
     StoredFile,
     insert_artifact,
@@ -171,6 +173,7 @@ from lastro.history.models import (
     RunSummary,
     SnapshotStatus,
     SourceFileRecord,
+    TraceLink,
     VerdictInput,
 )
 from lastro.history.oracles import record_signal, select_signals
@@ -235,6 +238,7 @@ from lastro.mission.models import (
     HeuristicCheckInput,
     MissionPlanInput,
 )
+from lastro.observability.models import ExportStatus, ObservabilityStatus
 from lastro.oracles.models import OracleOccurrence, OracleSignal
 from lastro.oracles.sanitize import normalize
 from lastro.timeutil import utc_now
@@ -247,6 +251,13 @@ LAUNCH_ABANDONED_REASON = "launch_abandoned"
 LAUNCH_PUBLISH_FAILED_REASON = "launch_publish_failed"
 # Depois de esgotar o retry, a marcação de blocked é uma última tentativa única.
 _LAST_ATTEMPT_POLICY = RetryPolicy(delays=())
+
+
+def _trace_link(conn: sqlite3.Connection, run_id: str) -> TraceLink | None:
+    context = obs.select_context(conn, run_id)
+    if context is None:
+        return None
+    return TraceLink(trace_id=context.trace_id, trace_url=context.trace_url)
 
 
 def _run_exists(conn: sqlite3.Connection, run_id: str) -> bool:
@@ -350,6 +361,7 @@ class HistoryStore:
         executor_snapshot: JsonObject | None = None,
         parent_run_id: str | None = None,
         reproduction_of: tuple[str, str, int] | None = None,
+        evaluation: EvaluationTraceContext | None = None,
     ) -> CreatedRun:
         """Cria e confirma a run, a missão e run_started antes de publicar o ponteiro ativo.
 
@@ -359,6 +371,10 @@ class HistoryStore:
 
         `reproduction_of` (rodada, finding, ordinal) cria uma run filha de reprodução, com o
         vínculo gravado na mesma transação; ela nunca é tratada como retomada.
+
+        Com observabilidade habilitada no perfil, destino e etiquetas de avaliação (`evaluation`,
+        só de chamador confiável; retomada e reprodução herdam as da origem) são congelados na
+        mesma transação de run_started, sem resolver chaves nem fazer rede.
         """
         validated = validate_mission(mission)
         issue_capture = prepared.issue if prepared is not None else None
@@ -416,6 +432,7 @@ class HistoryStore:
             )
 
             context_files = _store_context_files(run_dir, change) if prepared is not None else None
+            destination = context.profile.observability.destination()
 
             def persist(conn: sqlite3.Connection) -> RunRecord:
                 final = record
@@ -440,7 +457,18 @@ class HistoryStore:
                     )
                 if stored is not None:
                     insert_artifact(conn, run_id, stored, ArtifactType.SNAPSHOT, started_at)
-                insert_event(conn, run_id, started, started_at)
+                root = insert_event(conn, run_id, started, started_at)
+                if destination is not None:
+                    obs.insert_context(
+                        conn,
+                        self.project_id,
+                        root,
+                        ObservabilityContextInput(
+                            destination=destination,
+                            evaluation=evaluation or obs.origin_evaluation(conn, run_id),
+                        ),
+                        started_at,
+                    )
                 if prepared is not None and context_files is not None:
                     manifest, sources, extras = context_files
                     for item in extras:
@@ -1597,6 +1625,7 @@ class HistoryStore:
                 issue_snapshot=_run_snapshot(conn, run_id),
                 version_observations=tuple(select_version_observations(conn, run_id)),
                 verdicts=tuple(reproduction.select_verdicts(conn, run_id)),
+                trace=_trace_link(conn, run_id),
                 **self._execution_inputs(conn, run_id),
             )
 
@@ -1923,6 +1952,64 @@ class HistoryStore:
             )
 
         return self._database.read(read)
+
+    def observability_context(self, run_id: str) -> obs.ObservabilityRun | None:
+        """Contexto congelado da run; None quando ela não tem opt-in (desligada ou legada)."""
+        return self._database.read(lambda conn: obs.select_context(conn, run_id))
+
+    def observability_status(self, run_id: str) -> ObservabilityStatus | None:
+        return self._database.read(lambda conn: obs.status(conn, run_id))
+
+    def project_observability(self, run_id: str, limit: int = obs.BATCH_SIZE) -> int:
+        now = self._now()
+        return self._database.write(lambda conn: obs.project(conn, run_id, now, limit))
+
+    def claim_observability_lease(self, run_id: str, token: str) -> bool:
+        moment = self._clock()
+        return self._database.write(lambda conn: obs.claim_lease(conn, run_id, token, moment))
+
+    def release_observability_lease(self, run_id: str, token: str) -> None:
+        now = self._now()
+        self._database.write(lambda conn: obs.release_lease(conn, run_id, token, now))
+
+    def take_observability_batch(
+        self, run_id: str, token: str, limit: int = obs.BATCH_SIZE
+    ) -> list[obs.BatchItem]:
+        now = self._now()
+        return self._database.write(lambda conn: obs.take_batch(conn, run_id, token, now, limit))
+
+    def acknowledge_observability(self, run_id: str, token: str, event_ids: list[int]) -> int:
+        now = self._now()
+        return self._database.write(
+            lambda conn: obs.acknowledge(conn, run_id, token, event_ids, now)
+        )
+
+    def fail_observability(
+        self,
+        run_id: str,
+        token: str,
+        event_ids: list[int],
+        kind: obs.FailureKind,
+        code: str,
+        retry_after: float | None = None,
+    ) -> None:
+        moment = self._clock()
+        self._database.write(
+            lambda conn: obs.record_failure(
+                conn, run_id, token, event_ids, kind, code, moment, retry_after
+            )
+        )
+
+    def set_observability_status(self, run_id: str, status: ExportStatus, code: str | None) -> None:
+        now = self._now()
+        self._database.write(lambda conn: obs.set_status(conn, run_id, status, code, now))
+
+    def unblock_observability(self, run_id: str) -> None:
+        now = self._now()
+        self._database.write(lambda conn: obs.unblock(conn, run_id, now))
+
+    def observability_spans(self, run_id: str) -> list[tuple[int, str, str | None]]:
+        return self._database.read(lambda conn: obs.list_span_rows(conn, run_id))
 
     def list_runs(self, run_filter: RunFilter | None = None) -> list[RunSummary]:
         selected = run_filter or RunFilter()

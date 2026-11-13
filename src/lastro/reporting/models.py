@@ -357,6 +357,15 @@ class ModelUsageView:
 
 
 @dataclass(frozen=True)
+class TraceView:
+    """Link privado da trace; não informa se a ingestão foi confirmada."""
+
+    trace_id: str
+    trace_url: str
+    label: str = "Langfuse"
+
+
+@dataclass(frozen=True)
 class ChangeContextView:
     """Contexto de mudança da run, só no relatório privado; nada é relido de Git ou GitHub."""
 
@@ -476,3 +485,4 @@ class ReportData:
     model_usage: ModelUsageView | None = None
     change_context: ChangeContextView | None = None
     execution: ExecutionView | None = None
+    trace: TraceView | None = None

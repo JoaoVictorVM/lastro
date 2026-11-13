@@ -871,6 +871,14 @@ class ReportSnapshot:
 
 
 @dataclass(frozen=True)
+class TraceLink:
+    """Trace congelada da run com opt-in; o link é calculado localmente, sem rede."""
+
+    trace_id: str
+    trace_url: str
+
+
+@dataclass(frozen=True)
 class ReportInputs:
     """Leitura consistente de tudo que o relatório projeta, numa única transação."""
 
@@ -897,6 +905,8 @@ class ReportInputs:
     parent_run_id: str | None = None
     reconciliations: "tuple[Reconciliation, ...]" = ()
     verdicts: "tuple[ReproductionVerdict, ...]" = ()
+    # Link privado da trace; None nas runs sem opt-in de observabilidade.
+    trace: TraceLink | None = None
 
 
 APPROVAL_TTL_SECONDS = 900

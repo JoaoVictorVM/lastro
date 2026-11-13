@@ -104,6 +104,15 @@
 
 Costs are computed from provider-reported usage and the pricing frozen for this run; they are not a reconciled invoice.
 {% endif %}
+{% if report.trace and not public %}
+
+## Trace
+
+- {{ report.trace.label }}: {{ report.trace.trace_url }}
+- Trace id: {{ report.trace.trace_id | code }}
+
+The link requires a Langfuse login and does not confirm that every span was ingested; run `lastro obs status {{ report.run_id }}` for the local export state.
+{% endif %}
 
 ## Mission and charter
 

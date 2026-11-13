@@ -67,7 +67,7 @@ def test_upgrade_preserves_event_ids_and_foreign_keys(v7_history: tuple[Any, str
     assert before_counts["knowledge_evidence"] >= 1
     assert before_counts["oracle_signals"] == 1
 
-    assert apply_migrations(database) == [8, 9, 10, 11]
+    assert apply_migrations(database) == [8, 9, 10, 11, 12]
 
     with database.connection() as conn:
         after_events = [tuple(row) for row in conn.execute("SELECT * FROM events ORDER BY id")]

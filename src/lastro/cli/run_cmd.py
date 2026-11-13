@@ -298,6 +298,7 @@ def start(
     project = state.require_history_project()
     if executor is not None:
         project = project.with_executor(executor)
+    _obs_preflight(project)
     codex = _codex_preflight(project) if project.config.executor == "codex" else None
     bundle_hash = _bundle_hash(project.loaded.project_dir, project.config.executor)
     embedded = executor_spec(project.config.executor).embedded
@@ -385,6 +386,17 @@ def launch(
     raise typer.Exit(code=result.exit_code)
 
 
+def _obs_preflight(project: ProjectContext) -> None:
+    """Opt-in habilitado exige extra e chaves antes de criar a run; rede não participa."""
+    from lastro.observability import ObservabilityError, preflight
+
+    try:
+        preflight(project.profile.observability)
+    except ObservabilityError as exc:
+        output.error(f"{exc} ({exc.code})")
+        raise typer.Exit(code=USAGE_EXIT_CODE) from None
+
+
 def _native_preflight(project: ProjectContext) -> Any:
     """Antes de criar a run: extra, chave (por contagem de tokens), modelos e bundle."""
     from lastro.native.runner import PreflightError, preflight
@@ -400,6 +412,7 @@ def _run_native(
     project: ProjectContext, store: HistoryStore, created: CreatedRun, prepared: Any
 ) -> int:
     from lastro.native.runner import NativeRunner, exit_code, summary_lines
+    from lastro.observability import drain_run
 
     settings, provider = prepared
     runner = NativeRunner(
@@ -421,6 +434,7 @@ def _run_native(
         return INTERRUPTED_EXIT_CODE
     for line in summary_lines(outcome):
         output.info(line)
+    drain_run(project, store, created.record.id)
     _reproduce_after(project, store, created.record.id)
     return exit_code(outcome)
 
@@ -509,6 +523,7 @@ def resume(
         raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
     # Mesmo executor da origem, sujeito à configuração atual; nunca troca implicitamente.
     project = project.with_executor(source.executor_name)
+    _obs_preflight(project)
     codex = _codex_preflight(project) if project.config.executor == "codex" else None
     bundle_hash = _bundle_hash(project.loaded.project_dir, project.config.executor)
     embedded = executor_spec(project.config.executor).embedded

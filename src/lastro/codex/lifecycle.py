@@ -161,6 +161,10 @@ class RunCloser:
     def result(
         self, closure: Closure, version: str, codex_exit_code: int | None = None
     ) -> CodexResult:
+        from lastro.observability import drain_run
+
+        # Término local sem owner: a raiz e os últimos eventos só são exportados aqui.
+        drain_run(self.project, self.history, self.run_id)
         record: RunRecord = self.history.get_run(self.run_id)
         failed = closure.report_status == "failed" or closure.report_kind is None
         return CodexResult(

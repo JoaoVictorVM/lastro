@@ -60,6 +60,7 @@ from lastro.reporting.models import (
     ReproductionView,
     SignalView,
     SummaryView,
+    TraceView,
     VerdictView,
 )
 
@@ -152,6 +153,8 @@ def data_sha256(data: ReportData) -> str:
         content.pop("change_context", None)
     if content.get("execution") is None:
         content.pop("execution", None)
+    if content.get("trace") is None:
+        content.pop("trace", None)
     for group in ("confirmed", "suspected", "harness_failures"):
         for item in cast(list[dict[str, Any]], content.get(group) or []):
             _strip_finding_defaults(item)
@@ -575,6 +578,11 @@ def project(
         model_usage=_model_usage(inputs),
         change_context=_change_context(inputs),
         execution=_execution(inputs),
+        trace=(
+            TraceView(trace_id=inputs.trace.trace_id, trace_url=inputs.trace.trace_url)
+            if inputs.trace is not None
+            else None
+        ),
     )
 
 

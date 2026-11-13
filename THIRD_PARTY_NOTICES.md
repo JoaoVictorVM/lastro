@@ -11,6 +11,7 @@ Components whose files are copied into this repository and shipped inside the La
 | Project | Author or organization | URL | Version | License | Modifications | Required notices |
 |---|---|---|---|---|---|---|
 | htmx | Big Sky Software | https://github.com/bigskysoftware/htmx | 2.0.11 | 0BSD | None. `src/lastro_demo/static/htmx.min.js` is byte-identical to `dist/htmx.min.js` of the 2.0.11 release (SHA-256 `d6fdc75f204e6bdefa99b69bf1e6d4ac69b8a364f77929f45c13476b4000f717`). | None required by 0BSD; attribution kept in NOTICE. |
+| Langfuse Docker Compose | Langfuse GmbH | https://github.com/langfuse/langfuse | commit 2365023d8542afc9b0d4e720a3bddc9ce301f342 | MIT | Adapted in `src/lastro/observability/resources/compose.yaml`: images pinned by version and digest, required secrets without example defaults, only the web UI published on 127.0.0.1, AI gateway removed, internal network, log rotation and telemetry disabled. Provenance in `src/lastro/observability/resources/README.md`. | MIT license notice of the upstream repository. |
 
 Lastro does not incorporate any adapted skill or third-party prompt at this version.
 
@@ -41,7 +42,7 @@ package; each one is installed from its own distribution, which carries its lice
 | markdown-it-py | Chris Sewell and contributors | https://github.com/executablebooks/markdown-it-py | 4.2.0 | MIT | None | License text shipped with the package |
 | markupsafe | Pallets | https://github.com/pallets/markupsafe | 3.0.4 | BSD-3-Clause | None | License text shipped with the package |
 | mdurl | Taneli Hukkinen | https://github.com/executablebooks/mdurl | 0.1.2 | MIT | None | License text shipped with the package |
-| opentelemetry-api | OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-python | 1.45.1 | Apache-2.0 | None | License and notices shipped with the package |
+| opentelemetry-api | OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-python | 1.45.2 | Apache-2.0 | None | License and notices shipped with the package |
 | playwright | Microsoft Corporation | https://github.com/microsoft/playwright-python | 1.64.1 | Apache-2.0 | None | License and notices shipped with the package |
 | pycparser | Eli Bendersky | https://github.com/eliben/pycparser | 3.12 | BSD-3-Clause | None | License text shipped with the package |
 | pydantic | Pydantic (Samuel Colvin and contributors) | https://github.com/pydantic/pydantic | 2.14.1 | MIT | None | License text shipped with the package |
@@ -59,6 +60,29 @@ package; each one is installed from its own distribution, which carries its lice
 | typing-inspection | Victorien Plot (Pydantic) | https://github.com/pydantic/typing-inspection | 0.4.4 | MIT | None | License text shipped with the package |
 | tzdata | Python Software Foundation | https://github.com/python/tzdata | 2026.6 | Apache-2.0 | None | License and notices shipped with the package |
 | uvicorn | Encode (Tom Christie) and Marcelo Trylesinski | https://github.com/Kludex/uvicorn | 0.54.0 | BSD-3-Clause | None | License text shipped with the package |
+
+## Optional observability dependencies
+
+Installed only with the `obs` extra (`uv sync --extra obs` or `pip install 'lastro[obs]'`).
+The base installation does not pull them.
+
+| Project | Author or organization | URL | Version | License | Modifications | Required notices |
+|---|---|---|---|---|---|---|
+| opentelemetry-sdk | OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-python | 1.45.2 | Apache-2.0 | None | License and notices shipped with the package |
+| opentelemetry-exporter-otlp-proto-http | OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-python | 1.45.2 | Apache-2.0 | None | License and notices shipped with the package |
+| opentelemetry-exporter-otlp-proto-common | OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-python | 1.45.2 | Apache-2.0 | None | License and notices shipped with the package |
+| opentelemetry-proto | OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-python | 1.45.2 | Apache-2.0 | None | License and notices shipped with the package |
+| opentelemetry-semantic-conventions | OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-python | 0.66b2 | Apache-2.0 | None | License and notices shipped with the package |
+| opentelemetry-exporter-otlp-common | OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-python | 0.66b2 | Apache-2.0 | None | License and notices shipped with the package |
+| opentelemetry-exporter-http-transport | OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-python | 0.66b2 | Apache-2.0 | None | License and notices shipped with the package |
+| protobuf | Google LLC | https://github.com/protocolbuffers/protobuf | 7.36.2 | BSD-3-Clause | None | License text shipped with the package |
+| googleapis-common-protos | Google LLC | https://github.com/googleapis/google-cloud-python | 1.76.0 | Apache-2.0 | None | License and notices shipped with the package |
+| requests | Kenneth Reitz and contributors | https://github.com/psf/requests | 2.34.2 | Apache-2.0 | None | License and notices shipped with the package |
+| urllib3 | Andrey Petrov and contributors | https://github.com/urllib3/urllib3 | 2.8.0 | MIT | None | License text shipped with the package |
+| charset-normalizer | Ahmed TAHRI | https://github.com/jawah/charset_normalizer | 3.5.2 | MIT | None | License text shipped with the package |
+
+The container images started by `lastro obs up` (Langfuse, ClickHouse, PostgreSQL, Redis and
+MinIO) are downloaded by Docker from their own registries and are not distributed with Lastro.
 
 The Chromium build used by Playwright is downloaded separately with `playwright install
 chromium` and is not distributed with Lastro.

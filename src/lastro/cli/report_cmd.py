@@ -6,13 +6,13 @@ import typer
 
 from lastro.cli import output
 from lastro.cli.state import HISTORY_ERROR_EXIT_CODE, get_state
-from lastro.history import HistoryError, HistoryStore, RunNotFoundError
+from lastro.history import HistoryError, HistoryStore, RunNotFoundError, RunStatus
 from lastro.reporting.integrity import verify_artifacts
 from lastro.reporting.public import export_public
 
 INTEGRITY_FAILED_EXIT_CODE = 2
 
-report_app = typer.Typer(help="Verify and export run reports.", no_args_is_help=True)
+report_app = typer.Typer(help="Build, verify and export run reports.", no_args_is_help=True)
 
 RunIdArgument = Annotated[str, typer.Argument(help="Run id shown by 'lastro history'.")]
 
@@ -26,6 +26,36 @@ def _store_for_run(ctx: typer.Context, run_id: str) -> HistoryStore:
         output.error(f"Run not found in this project: {run_id}")
         raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
     return store
+
+
+PARTIAL_STATUSES = (RunStatus.CANCELLED, RunStatus.INTERRUPTED, RunStatus.LIMIT_REACHED)
+
+
+@report_app.command("build")
+def build(ctx: typer.Context, run_id: RunIdArgument) -> None:
+    """Build (or reuse) the report of a finished run from the history; no network involved."""
+    from lastro.reporting.builder import ReportBuilder
+
+    store = _store_for_run(ctx, run_id)
+    record = store.get_run(run_id)
+    if not record.status.is_terminal:
+        output.error(
+            f"Run {run_id} is still {record.status.value}; build its report after it ends."
+        )
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE)
+    builder = ReportBuilder(store)
+    try:
+        report = (
+            builder.build_partial(run_id, record.status_reason or record.status.value)
+            if record.status in PARTIAL_STATUSES
+            else builder.build_final(run_id)
+        )
+    except HistoryError as exc:
+        output.error(str(exc))
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    output.info(str(report.report_path or report.fallback_path))
+    if report.data.trace is not None:
+        output.info(f"Trace ({report.data.trace.label}): {report.data.trace.trace_url}")
 
 
 @report_app.command("verify")
