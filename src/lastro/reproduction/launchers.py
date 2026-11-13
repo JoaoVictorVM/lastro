@@ -22,6 +22,7 @@ from lastro.history import (
     JsonObject,
     RunStatus,
 )
+from lastro.observability import without_keys
 
 type Writer = Callable[[str], None]
 
@@ -235,6 +236,7 @@ class ClaudeReproducer:
                     stderr=subprocess.STDOUT,
                     timeout=limits.max_minutes * 60 + GRACE_SECONDS,
                     check=False,
+                    env=without_keys(project.profile.observability),
                 )
         except (OSError, subprocess.SubprocessError) as error:
             return LaunchOutcome(

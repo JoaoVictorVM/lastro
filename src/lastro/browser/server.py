@@ -23,6 +23,7 @@ from lastro.browser.tools import (
 )
 from lastro.config.loader import ProjectContext, load_project
 from lastro.history import HistoryStore, RunRecord, open_history
+from lastro.observability import start_worker
 
 
 class PinnedRunError(RuntimeError):
@@ -83,6 +84,8 @@ async def serve(
             result = {"error": NO_RUN}
         return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
+    # Exportação fora do lock de sessão e do stdout do protocolo; falha só degrada a telemetria.
+    worker = start_worker(project, history, run.id) if run is not None else None
     control = HumanControl(runtime) if runtime is not None else None
     if control is not None:
         await control.start()
@@ -101,6 +104,8 @@ async def serve(
         if runtime is not None:
             runtime.approvals.close()
             await runtime.session.close()
+        if worker is not None:
+            await asyncio.to_thread(worker.stop)
 
 
 def main() -> None:

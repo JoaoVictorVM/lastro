@@ -41,6 +41,7 @@ from lastro.history.errors import (
     REPRODUCTION_CONFIG_INVALID,
     REPRODUCTION_NOT_ELIGIBLE,
 )
+from lastro.observability import drain_run
 from lastro.reproduction.brief import build_brief
 from lastro.reproduction.decide import decide
 from lastro.reproduction.interpret import (
@@ -169,6 +170,8 @@ class ReproductionCoordinator:
             self.write(outcome.line)
             outcomes.append(outcome)
         self.history.close_reproduction_round(opened.id)
+        # Eventos de reprodução chegam depois do término da run original, na mesma trace.
+        drain_run(self.project, self.history, run_id)
         return RoundOutcome(run_id, opened.id, tuple(outcomes), report_path=self._report(record))
 
     def _verifier(
