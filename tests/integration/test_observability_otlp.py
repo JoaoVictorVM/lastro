@@ -13,6 +13,7 @@ from lastro.observability.worker import ExportWorker
 
 from .obs_support import Reply, closed_port_base, otlp_receiver, partial_reply
 
+RETRYABLE_CODES = ("export_unavailable", "export_timeout")
 PUBLIC = "-".join(("pk", "lf", "sentinel", "public"))
 SECRET = "-".join(("sk", "lf", "sentinel", "secret"))
 
@@ -113,8 +114,11 @@ def test_collector_outage_does_not_change_run_status(
     history.finish_run(run.record.id, RunStatus.COMPLETED)
     result = worker.stop(drain_budget=1.0)
 
-    assert result.last_code == "export_unavailable"
+    # Porta recusada vira ConnectError, mas no Windows a recusa leva ~2,4 s (retransmissão do
+    # SYN): um envio com orçamento menor termina em timeout. Os dois códigos são recuperáveis.
+    assert result.last_code in RETRYABLE_CODES
     assert history.get_run(run.record.id).status == RunStatus.COMPLETED
     status = history.observability_status(run.record.id)
     assert status.pending_spans == 3
     assert status.export_status == "pending"
+    assert status.last_error_code in RETRYABLE_CODES
