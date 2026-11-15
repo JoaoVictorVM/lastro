@@ -77,6 +77,7 @@ from lastro.history.errors import (
     RunNotActiveError,
     RunNotFoundError,
 )
+from lastro.history.evaluation import EvalRepository
 from lastro.history.events import (
     PreparedEvent,
     insert_event,
@@ -327,6 +328,11 @@ class HistoryStore:
     @property
     def database_path(self) -> Path:
         return self._layout.database
+
+    @property
+    def evaluations(self) -> EvalRepository:
+        """Registro das suites de avaliação deste projeto."""
+        return EvalRepository(self._database, self._clock, self._entropy)
 
     def _now(self) -> str:
         return db_timestamp(self._clock())

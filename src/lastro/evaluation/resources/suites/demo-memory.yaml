@@ -1,0 +1,37 @@
+# Memória: cinco blocos pareados, cada um aberto por aquecimento full em raiz nova. A variante
+# shifted mede generalização em estrato separado.
+schema_version: 1
+id: demo-memory
+executor: claude-code
+runs_per_condition: 5
+seed: 11
+pairing: warmup
+conditions: [baseline, full, -memory]
+missions:
+  - id: crud
+    file: missions/demo-crud.md
+    criteria:
+      - id: persistence
+        text: Os dados salvos permanecem iguais ao que foi informado depois de reabrir o registro
+      - id: validation
+        text: Dados inválidos são rejeitados com mensagem clara junto ao campo
+scenarios:
+  - id: warm-base
+    mission: crud
+    demo:
+      defects: [d01, d02, d03, d04, d05, d06, d07, d08, d09, d10]
+      scenarios: []
+      variant: base
+    memory: {mode: paired}
+  - id: warm-shifted
+    mission: crud
+    demo:
+      defects: [d01, d02, d03, d04, d05, d06, d07, d08, d09, d10]
+      scenarios: []
+      variant: shifted
+    memory: {mode: paired}
+judge:
+  sample_fraction: 0.2
+  parse_retries: 1
+limits:
+  suite_budget_usd: "30.00"
