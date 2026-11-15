@@ -12,6 +12,14 @@ list the intended scope and contain no shipped changes until their release date 
 
 ### Added
 
+- Evaluation harness with the `eval` extra: `lastro eval run`, `resume`, `show`, `export` and
+  `review export|import`, distributed `demo-core`, `demo-scenarios` and `demo-memory` suites,
+  a bare-agent baseline contained to the managed demo, one-at-a-time ablations bound to the
+  run record, a demo reset before every measured exploration, policy violations counted from
+  the demo access log, a condition-blind rubric judge with one parse retry, a frozen 20% human
+  review sample with judge-human agreement, results per condition with N, mean and sample
+  standard deviation, and a sanitized public report. The demo gains a `shifted` defect variant
+  and server-generated request ids in its access log.
 - Opt-in observability per profile with the `obs` extra: each run is exported as one
   OpenTelemetry trace to Langfuse (one span per committed event, allowlisted and redacted
   attributes, native model usage and cost per attempt, external executors marked as

@@ -73,7 +73,7 @@ Solid green nodes are implemented today. Dashed grey nodes are planned.
 | False positives | Not measured yet |
 | Mission criteria met | Not measured yet |
 
-No evaluation has been run yet, so this table intentionally shows no numbers. Evaluation results will be published here, with a link to the full sanitized results, once the evaluation harness exists.
+No evaluation has been run yet, so this table intentionally shows no numbers. The evaluation harness is available: `lastro eval run demo-core` compares the full harness against a bare-agent baseline and one-at-a-time ablations, and writes a sanitized results file. See [docs/evaluation.md](docs/evaluation.md) for the method, isolation limits and how to read the metrics. Results will be published here, with a link to the full sanitized results, after real runs with human review.
 
 ## Supported executors
 

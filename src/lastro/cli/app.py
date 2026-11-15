@@ -14,6 +14,7 @@ from lastro.cli import (
     data_cmd,
     demo_cmd,
     doctor_cmd,
+    eval_cmd,
     history_cmd,
     init_cmd,
     knowledge_cmd,
@@ -82,6 +83,7 @@ app.add_typer(report_cmd.report_app, name="report")
 app.command(name="approve")(approve_cmd.approve)
 app.add_typer(knowledge_cmd.knowledge_app, name="knowledge")
 app.add_typer(obs_cmd.obs_app, name="obs")
+app.add_typer(eval_cmd.eval_app, name="eval")
 stubs.register(app)
 
 
