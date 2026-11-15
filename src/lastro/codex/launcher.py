@@ -106,15 +106,26 @@ def _check_credential_source(project: ProjectContext) -> None:
 
 
 def prepare_codex(
-    project: ProjectContext, *, probe: Callable[[], CodexInstall] | None = None
+    project: ProjectContext,
+    *,
+    probe: Callable[[], CodexInstall] | None = None,
+    bundle_verifier: Callable[[Path], str] | None = None,
 ) -> PreparedCodex:
-    """Instalação, login, regras, instruções e bundle; falhar aqui não cria run."""
+    """Instalação, login, regras, instruções e bundle; falhar aqui não cria run.
+
+    `bundle_verifier` só é passado pelo supervisor da avaliação, que valida o bundle derivado da
+    condição; o caminho normal sempre exige o manifest completo.
+    """
     project_dir = project.loaded.project_dir
     install = (probe or PROBE)()
     codex_config.load_policy(project_dir)
     manifest = codex_config.verify_manifest(project_dir)
     try:
-        bundle = verify_bundle(project_dir)
+        bundle_sha256 = (
+            bundle_verifier(project_dir)
+            if bundle_verifier is not None
+            else verify_bundle(project_dir).sha256
+        )
     except BundleError as error:
         raise CodexPreflightError(str(error)) from None
     problems = instruction_problems(project_dir / codex_config.INSTRUCTIONS_FILE)
@@ -123,7 +134,7 @@ def prepare_codex(
             f"{'; '.join(problems)}; run 'lastro init --executor codex' and adjust the file."
         )
     _check_credential_source(project)
-    return PreparedCodex(install, manifest, bundle.sha256)
+    return PreparedCodex(install, manifest, bundle_sha256)
 
 
 def executor_snapshot(prepared: PreparedCodex) -> dict[str, Any]:
@@ -141,7 +152,11 @@ def _instructions(project_dir: Path) -> str:
     """O agente não tem ferramenta de arquivo: recebe o conteúdo já conferido pelo manifest."""
     sections = [INSTRUCTIONS_HEADER]
     for name in SKILL_FILES:
-        text = (project_dir / "skills" / "lastro" / name).read_text(encoding="utf-8")
+        path = project_dir / "skills" / "lastro" / name
+        # Bundle derivado de avaliação pode omitir um arquivo; o conteúdo já foi verificado.
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
         sections.append(f'<lastro_skill file="{name}">\n{text}\n</lastro_skill>')
     return "\n".join(sections)
 
@@ -471,9 +486,10 @@ def launch(
     probe: Callable[[], CodexInstall] | None = None,
     runner: Runner = default_runner,
     spawn: Spawn = subprocess.Popen,
+    bundle_verifier: Callable[[Path], str] | None = None,
 ) -> CodexResult:
-    """Interface usada pela CLI e pelo futuro runner de avaliação; não recria a run."""
-    prepared = prepare_codex(project, probe=probe)
+    """Interface usada pela CLI e pelo runner de avaliação; não recria a run."""
+    prepared = prepare_codex(project, probe=probe, bundle_verifier=bundle_verifier)
     plan = revalidate(project, history, run_id, mode, prepared)
     project_dir = project.loaded.project_dir
     home = codex_home()

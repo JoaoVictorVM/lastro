@@ -15,6 +15,7 @@ from lastro.config.reproduction import (
     ReproductionSettings,
     settings_from_snapshot,
 )
+from lastro.evaluation.conditions import child_snapshot_block, from_snapshot
 from lastro.history import (
     REPRODUCTION_CHILD_BLOCK,
     ActiveRunExistsError,
@@ -137,6 +138,11 @@ class ReproductionCoordinator:
             )
         if not record.status.is_terminal:
             raise ReproductionError(REPRODUCTION_NOT_ELIGIBLE, f"Run {run_id} is still running.")
+        condition = from_snapshot(record.config_snapshot)
+        if condition is not None and not condition.reproduction:
+            raise ReproductionError(
+                REPRODUCTION_NOT_ELIGIBLE, f"Run {run_id} has reproduction disabled."
+            )
         findings = self.history.eligible_findings(run_id)
         if finding_id is not None:
             findings = [item for item in findings if item.id == finding_id]
@@ -267,6 +273,7 @@ class ReproductionCoordinator:
             skill_bundle_version=prepared.skill_bundle_version,
             executor_snapshot={
                 **prepared.executor_snapshot,
+                **child_snapshot_block(self.history.get_run(finding.run_id).config_snapshot),
                 REPRODUCTION_CHILD_BLOCK: {"brief_sha256": brief.sha256},
             },
             reproduction_of=(opened.id, finding.id, ordinal),

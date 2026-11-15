@@ -17,6 +17,7 @@ from typing import Any, TextIO, cast
 from lastro.browser.control import request_termination
 from lastro.config.loader import ProjectContext
 from lastro.config.native import NativeSettings
+from lastro.evaluation.conditions import from_snapshot
 from lastro.history import (
     REPRODUCTION_CHILD_BLOCK,
     HistoryError,
@@ -206,6 +207,7 @@ class NativeRunner:
         self.adapter: McpSessionAdapter | None = None
         self.errlog: TextIO | None = None
         self.outcome: NativeOutcome | None = None
+        self.memory_enabled = True
 
     async def run(self) -> NativeOutcome:
         try:
@@ -241,7 +243,10 @@ class NativeRunner:
             self.write("! MCP server did not start; see native-mcp.log in the run folder.")
             return await self.finish("blocked", "executor_configuration")
         child = REPRODUCTION_CHILD_BLOCK in record.config_snapshot
-        problems = compare_catalog(catalog, expected_catalog(reproduction=child))
+        condition = from_snapshot(record.config_snapshot)
+        self.memory_enabled = condition is None or condition.memory
+        disabled = condition.disabled_tools if condition is not None else frozenset[str]()
+        problems = compare_catalog(catalog, expected_catalog(reproduction=child, disabled=disabled))
         if problems:
             self.write("! tool catalog differs from the Lastro contract: " + "; ".join(problems))
             return await self.finish("blocked", "executor_configuration")
@@ -285,6 +290,7 @@ class NativeRunner:
             system=system_blocks(self.prepared.bundle),
             write=self.write,
             tools=[tool.document() for tool in catalog],
+            memory_enabled=self.memory_enabled,
         )
 
         async def wrap_up(state: NativeState) -> NativeState:

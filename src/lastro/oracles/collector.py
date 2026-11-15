@@ -34,6 +34,8 @@ class OracleCollector:
         self.worker: asyncio.Task[None] | None = None
         self.accepting = True
         self.failed = False
+        # Ablação -oracles: a coleta não acontece, nem como sinal descartado depois.
+        self.disabled = False
 
     def mark_action(self, page: object, action_id: str, sequence: int) -> None:
         self.actions[page] = ActionContext(action_id, sequence, self.monotonic())
@@ -59,7 +61,7 @@ class OracleCollector:
         aborted: bool = False,
         has_response: bool = False,
     ) -> None:
-        if not self.accepting or self.failed:
+        if self.disabled or not self.accepting or self.failed:
             return
         try:
             now, timestamp = self.monotonic(), self.utc()

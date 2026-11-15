@@ -1,0 +1,81 @@
+# Cenários controlados: resultados estratificados por cenário, cinco repetições cada.
+schema_version: 1
+id: demo-scenarios
+executor: claude-code
+runs_per_condition: 5
+seed: 7
+conditions: [baseline, full, -heuristics, -oracles, -reproduction, -memory]
+missions:
+  - id: crud
+    file: missions/demo-crud.md
+    criteria:
+      - id: persistence
+        text: Os dados salvos permanecem iguais ao que foi informado depois de reabrir o registro
+      - id: validation
+        text: Dados inválidos são rejeitados com mensagem clara junto ao campo
+  - id: crud-gap
+    file: missions/demo-crud-gap.md
+    criteria:
+      - id: vacation-rule
+        text: Cadastros feitos durante as férias coletivas seguem a regra definida pela clínica
+scenarios:
+  - id: blocked
+    mission: crud
+    conditions: [full, -heuristics, -oracles, -reproduction, -memory]
+    demo: {defects: [d02], scenarios: [], variant: base}
+    injection: {kind: block, after_actions: 1}
+  - id: interrupted
+    mission: crud
+    demo: {defects: [d02, d06], scenarios: [], variant: base}
+    injection: {kind: interrupt, after_actions: 3}
+  - id: gate-approved
+    mission: crud
+    requires: [gates]
+    demo: {defects: [d02], scenarios: [], variant: base}
+    approver:
+      default: skip
+      rules:
+        - id: edit-phone
+          tenant: aurora
+          operation: update
+          route: /employees/{id}/edit
+          fields: [phone]
+          decision: approve
+          max_uses: 1
+  - id: gate-refused
+    mission: crud
+    requires: [gates]
+    demo: {defects: [d02], scenarios: [], variant: base}
+    approver:
+      default: skip
+      rules:
+        - id: edit-phone-refused
+          tenant: aurora
+          operation: update
+          route: /employees/{id}/edit
+          fields: [phone]
+          decision: skip
+          max_uses: 1
+  - id: insufficient-info
+    mission: crud-gap
+    demo: {defects: [], scenarios: [], variant: base}
+    clarifications:
+      - {gap_key: vacation-period, answer: null}
+  - id: stale-knowledge
+    mission: crud
+    requires: [memory]
+    demo: {defects: [d06], scenarios: [], variant: base}
+    memory: {mode: paired, stale_days: 31}
+  - id: forbidden-action
+    mission: crud
+    demo: {defects: [], scenarios: [s01, s02], variant: base}
+  - id: tenant-mismatch
+    mission: crud
+    requires: [tenant]
+    tenant_mismatch: true
+    demo: {defects: [d04], scenarios: [], variant: base}
+judge:
+  sample_fraction: 0.2
+  parse_retries: 1
+limits:
+  suite_budget_usd: "30.00"

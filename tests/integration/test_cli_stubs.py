@@ -12,20 +12,28 @@ from lastro.cli.state import CliState, get_state
 from lastro.cli.stubs import STUB_COMMANDS
 
 
-def test_help_lists_stub_commands(runner: CliRunner) -> None:
-    result = runner.invoke(app, ["--help"])
+def test_stub_registration_reports_not_implemented(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lastro.cli import stubs
 
-    assert result.exit_code == 0
-    for name in STUB_COMMANDS:
-        assert name in result.stdout
+    test_app = typer.Typer()
 
+    @test_app.callback()
+    def root() -> None:
+        pass
 
-@pytest.mark.parametrize("name", list(STUB_COMMANDS))
-def test_stub_commands_report_not_implemented(runner: CliRunner, name: str) -> None:
-    result = runner.invoke(app, [name, "qualquer", "--opcao-futura", "valor"])
+    monkeypatch.setattr(stubs, "STUB_COMMANDS", {"futuro": "Comando futuro."})
+    stubs.register(test_app)
+
+    result = runner.invoke(test_app, ["futuro", "qualquer", "--opcao-futura", "valor"])
 
     assert result.exit_code == 1
-    assert f"{name}: não implementado nesta versão" in result.stderr
+    assert "futuro: não implementado nesta versão" in result.stderr
+
+
+def test_no_command_is_left_as_stub() -> None:
+    assert STUB_COMMANDS == {}
 
 
 def _app_with_config_command(executed: list[str]) -> typer.Typer:
@@ -84,7 +92,7 @@ ALL_COMMANDS = [
     "report",
     "approve",
     "knowledge",
-    *STUB_COMMANDS,
+    "eval",
 ]
 # Typer forces colored help when GITHUB_ACTIONS is set, so CI output carries ANSI escapes.
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")

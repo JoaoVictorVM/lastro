@@ -14,6 +14,7 @@ from collections.abc import Callable
 
 from lastro.config.loader import ProjectContext
 from lastro.config.reproduction import settings_from_snapshot
+from lastro.evaluation.conditions import from_snapshot
 from lastro.history import (
     REPRODUCTION_CHILD_BLOCK,
     HistoryError,
@@ -36,6 +37,9 @@ def should_reproduce(project: ProjectContext, record: RunRecord) -> bool:
     if record.status != RunStatus.COMPLETED:
         return False
     if REPRODUCTION_CHILD_BLOCK in record.config_snapshot:
+        return False
+    condition = from_snapshot(record.config_snapshot)
+    if condition is not None and not condition.reproduction:
         return False
     settings = settings_from_snapshot(
         record.config_snapshot.get("reproduction"), project.profile.reproduction

@@ -92,6 +92,8 @@ class NativeAgent:
     system: list[dict[str, Any]]
     write: Writer
     tools: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    # Ablação -memory: o nó de memória não consulta nada nem gera prompt de memória.
+    memory_enabled: bool = True
 
     # Falhas de agente: auditadas como agent_failure, nunca como finding de produto.
     def agent_failure(self, code: str, detail: str, tool_name: str | None = None) -> None:
@@ -329,6 +331,8 @@ class NativeAgent:
         return await self.execute(uses, state) if uses else state
 
     async def consult_memory(self, state: NativeState) -> NativeState:
+        if not self.memory_enabled:
+            return {**state, "memory_consulted": True}
         state, uses = await self.think("consult_memory", state, MEMORY_TOOLS)
         state = {**state, "memory_consulted": True}
         return await self.execute(uses, state) if uses else state

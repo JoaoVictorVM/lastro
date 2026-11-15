@@ -69,7 +69,12 @@ def test_wheel_contains_package_data(wheel: Path) -> None:
 
     for expected in PACKAGE_DATA:
         assert expected in names, expected
-    assert not any("evals/" in name or "demo-bugs" in name for name in names)
+    # O gabarito só existe nos recursos privados do avaliador, nunca no pacote do demo.
+    assert not any(name.startswith("evals/") for name in names)
+    assert not any(name.startswith("lastro_demo/") and "demo-bugs" in name for name in names)
+    assert [name for name in names if "demo-bugs" in name] == [
+        "lastro/evaluation/resources/catalog/demo-bugs.yaml"
+    ]
     assert not any(name.startswith("tests/") for name in names)
 
 

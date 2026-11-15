@@ -22,6 +22,7 @@ from lastro.browser.video import EvidenceVideoRecorder, VideoError
 from lastro.config.loader import ProjectContext
 from lastro.config.policy import Binding, Strict, Target
 from lastro.config.schema import is_same_origin
+from lastro.evaluation.conditions import EffectiveCondition, from_snapshot
 from lastro.execution.models import (
     EXEMPT_TOOLS,
     ActionOutcome,
@@ -79,6 +80,17 @@ from lastro.testdata import TestDataRequest, generate, parse_request, reference_
 from lastro.timeutil import utc_now
 
 NO_RUN = "No active run. Start one with 'lastro run start'."
+
+
+def evaluation_condition(history: HistoryStore, run_id: str) -> EffectiveCondition | None:
+    """Condição gravada pelo supervisor da avaliação; bloco adulterado recusa a run."""
+    try:
+        snapshot = history.get_run(run_id).config_snapshot
+    except RunNotFoundError:
+        return None
+    return from_snapshot(snapshot)
+
+
 TOOLS = (
     "mission_context",
     "submit_mission_plan",
@@ -229,9 +241,13 @@ class Arguments(Strict):
     approval_proof: str | None = Field(default=None, min_length=1, max_length=2000)
 
 
-def catalog(reproduction: bool = False) -> tuple[str, ...]:
-    """Tools publicadas: o reprodutor ganha só a tool de resultado, nunca outra exceção."""
-    return (*TOOLS, *REPRODUCTION_TOOLS) if reproduction else TOOLS
+def catalog(reproduction: bool = False, disabled: frozenset[str] = frozenset()) -> tuple[str, ...]:
+    """Tools publicadas: o reprodutor ganha só a tool de resultado, nunca outra exceção.
+
+    `disabled` vem só da condição de avaliação vinculada à run, nunca do agente.
+    """
+    names = (*TOOLS, *REPRODUCTION_TOOLS) if reproduction else TOOLS
+    return tuple(name for name in names if name not in disabled)
 
 
 def is_reproduction_run(snapshot: JsonObject) -> bool:
@@ -461,7 +477,13 @@ class BrowserTools:
             project = project.for_reproduction()
             self.project = project
         self.snapshot = config_snapshot(project)
+        self.condition = evaluation_condition(history, run_id)
+        self.disabled_tools = (
+            self.condition.disabled_tools if self.condition is not None else frozenset[str]()
+        )
         self.session = BrowserSession(project, history, run_id, self.active)
+        if self.condition is not None and not self.condition.oracles:
+            self.session.oracles.disabled = True
         self.provenance = self.session.provenance
         self.video = EvidenceVideoRecorder(self.session, history, run_id, history.run_dir(run_id))
         self.monitor = ExecutionMonitor(self)
@@ -521,6 +543,8 @@ class BrowserTools:
             return result
 
     async def handle(self, name: str, raw: dict[str, Any], action_id: str) -> dict[str, Any]:
+        if name in self.disabled_tools:
+            return {"error": "tool_unavailable", "message": f"{name} is not available in this run."}
         waiting = self.while_waiting(name, raw, action_id)
         if waiting is not None:
             return waiting
@@ -1503,7 +1527,9 @@ class BrowserTools:
                     route,
                     self.session.sanitize(title),
                     redact_text(self.session.sanitize(snapshot)),
-                    self.history.list_oracle_signals(self.run_id, limit=5),
+                    []
+                    if self.session.oracles.disabled
+                    else self.history.list_oracle_signals(self.run_id, limit=5),
                 ),
                 "observation_id": observation.id,
             }

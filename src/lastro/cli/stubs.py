@@ -4,9 +4,7 @@ import typer
 
 from lastro.cli import output
 
-STUB_COMMANDS: dict[str, str] = {
-    "eval": "Executa avaliações do agente.",
-}
+STUB_COMMANDS: dict[str, str] = {}
 
 # Argumentos livres permitem que cada comando vire um grupo real depois sem quebrar quem já o chama.
 _FREE_ARGS = {"allow_extra_args": True, "ignore_unknown_options": True}

@@ -11,7 +11,7 @@ import socket
 import sys
 import time
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -307,6 +307,7 @@ def start(
     scenarios: Iterable[str] | None = None,
     variant: str | None = None,
     ready_timeout: float = READY_TIMEOUT_SECONDS,
+    extra_env: Mapping[str, str] | None = None,
 ) -> DemoState:
     """Sobe o servidor desacoplado e espera a prontidão; idempotente para o mesmo state_dir.
 
@@ -331,6 +332,7 @@ def start(
     env = dict(os.environ)
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    env.update(extra_env or {})
     with server_log.open("ab") as log:
         process = _process.spawn_detached(argv, cwd=state_dir, log=log, env=env)
     # Sem isso o objeto Popen avisaria, ao ser coletado, que o filho ainda está rodando.
