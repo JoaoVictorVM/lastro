@@ -6,7 +6,7 @@ from dataclasses import dataclass
 DEFECT_IDS: tuple[str, ...] = tuple(f"d{number:02d}" for number in range(1, 11))
 SCENARIO_IDS: tuple[str, ...] = ("s01", "s02")
 ALL_FLAG_IDS: tuple[str, ...] = DEFECT_IDS + SCENARIO_IDS
-VARIANTS: tuple[str, ...] = ("base",)
+VARIANTS: tuple[str, ...] = ("base", "shifted")
 DEFAULT_VARIANT = "base"
 
 DEFECTS_ENV = "LASTRO_DEMO_DEFECTS"
@@ -15,6 +15,18 @@ VARIANT_ENV = "LASTRO_DEMO_VARIANT"
 
 ALL_KEYWORD = "all"
 NONE_KEYWORD = "none"
+
+
+# Parâmetros dos defeitos que mudam por variante; os demais defeitos são idênticos nas duas. A
+# variante existe para distinguir lembrar um defeito conhecido de descobri-lo de novo.
+VARIANT_PARAMETERS: dict[str, dict[str, int | str]] = {
+    "base": {"d06_truncate_length": 50, "d10_rejected_role": "fisioterapeuta"},
+    "shifted": {"d06_truncate_length": 40, "d10_rejected_role": "tecnico_enfermagem"},
+}
+
+
+def variant_parameter(variant: str, name: str) -> int | str:
+    return VARIANT_PARAMETERS[validate_variant(variant)][name]
 
 
 class UnknownFlagError(ValueError):

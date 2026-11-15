@@ -1,0 +1,57 @@
+project_id = ${project_id}
+executor = ${executor}
+private_data_root = ${private_data_root}
+
+[profiles.eval]
+target_url = ${target_url}
+login_url = ${login_url}
+tenant_id = ${tenant_id}
+tenant_display_name = ${tenant_display}
+allowed_entities = ["employee"]
+editable_fields = { employee = ["full_name", "cpf", "email", "phone", "role", "hire_date", "status"] }
+
+[profiles.eval.run_limits]
+max_minutes = ${max_minutes}
+max_actions = ${max_actions}
+
+[profiles.eval.reproduction]
+auto = ${reproduction_auto}
+
+[profiles.eval.credentials]
+username_env = "LASTRO_EVAL_USERNAME"
+password_env = "LASTRO_EVAL_PASSWORD"
+
+[profiles.eval.auth]
+timeout_seconds = 15
+
+[[profiles.eval.auth.verification]]
+type = "api"
+endpoint = "/api/me"
+tenant_json_path = "tenant.id"
+
+[profiles.eval.policy]
+version = 1
+
+[[profiles.eval.policy.bindings]]
+id = "employee-update"
+entity = "employee"
+operation = "update"
+route = "/employees/{id}/edit"
+target = {role = "button", name = "Salvar"}
+form = "employee-form"
+field_values = {status = ["active"]}
+
+[profiles.eval.policy.bindings.fields]
+full_name = "full_name"
+cpf = "cpf"
+email = "email"
+phone = "phone"
+role = "role"
+hire_date = "hire_date"
+status = "status"
+
+[profiles.eval.policy.bindings.request]
+method = "POST"
+path = "/employees/{id}"
+success_status = 200
+${native_block}

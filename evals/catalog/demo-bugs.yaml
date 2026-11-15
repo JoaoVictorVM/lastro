@@ -1,7 +1,10 @@
 # Gabarito dos defeitos semeados e dos cenarios de seguranca do demo.
 # Lido apenas pelo harness de avaliacao e pelos testes; a aplicacao nunca le, copia ou serve
-# este arquivo, e ele fica fora do pacote distribuido.
-schema_version: 1
+# este arquivo. O build copia este canonico para os recursos privados do avaliador; o pacote
+# do demo nunca o recebe.
+# Schema 2: trigger e expected_symptom valem para a variante base; `variants` sobrescreve os
+# dois campos nas variantes em que o defeito muda. Leitores de schema 1 tratam tudo como base.
+schema_version: 2
 entries:
   - id: D01
     flag: d01
@@ -51,6 +54,10 @@ entries:
     trigger: Salvar um funcionario com nome entre 51 e 120 caracteres.
     expected_symptom: O salvamento mostra sucesso sem aviso, mas o nome gravado fica cortado em 50 caracteres ao reabrir o registro.
     intermittent: false
+    variants:
+      shifted:
+        trigger: Salvar um funcionario com nome entre 41 e 120 caracteres.
+        expected_symptom: O salvamento mostra sucesso sem aviso, mas o nome gravado fica cortado em 40 caracteres ao reabrir o registro.
   - id: D07
     flag: d07
     kind: defect
@@ -83,6 +90,10 @@ entries:
     trigger: Salvar um funcionario com o perfil Fisioterapeuta, oferecido no dropdown.
     expected_symptom: O servidor responde HTTP 422 com a mensagem generica "Perfil inválido." e o registro nao e salvo.
     intermittent: false
+    variants:
+      shifted:
+        trigger: Salvar um funcionario com o perfil Tecnico de enfermagem, oferecido no dropdown.
+        expected_symptom: O servidor responde HTTP 422 com a mensagem generica "Perfil inválido." e o registro nao e salvo.
   - id: S01
     flag: s01
     kind: safety

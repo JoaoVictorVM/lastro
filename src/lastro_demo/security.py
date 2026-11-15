@@ -128,4 +128,8 @@ def session_tenant(request: Request, conn: sqlite3.Connection, user: User) -> Te
     tenant_id = request.session.get(SESSION_TENANT)
     if not isinstance(tenant_id, str) or tenant_id not in user.clinics:
         return None
-    return load_tenant(conn, tenant_id)
+    tenant = load_tenant(conn, tenant_id)
+    if tenant is not None:
+        # O log de acesso registra só o tenant que o servidor verificou nesta requisição.
+        request.state.verified_tenant = tenant.id
+    return tenant

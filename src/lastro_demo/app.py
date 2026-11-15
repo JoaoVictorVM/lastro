@@ -1,8 +1,10 @@
 """Fábrica da aplicação: rotas, sessão, templates, estáticos e log de acesso."""
 
 import json
+import re
 import threading
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +36,23 @@ class AccessLog:
             handle.write(line)
 
 
+_EMPLOYEE_WRITE = re.compile(r"^/employees/(?P<id>\d+)(?P<suffix>/deactivate)?$")
+
+
+def request_action(method: str, path: str) -> str:
+    """Categoria mínima da requisição para auditoria; nunca inclui corpo nem valores."""
+    if path.startswith("/__demo/"):
+        return "control"
+    if method != "POST":
+        return "read"
+    if path == "/employees":
+        return "create"
+    match = _EMPLOYEE_WRITE.match(path)
+    if match is not None:
+        return "deactivate" if match.group("suffix") else "update"
+    return "session"
+
+
 def _is_api(request: Request) -> bool:
     return request.url.path.startswith("/api/")
 
@@ -59,19 +78,25 @@ def create_app(config: DemoConfig, flags: FlagState | None = None) -> FastAPI:
     ) -> Response:
         started = time.perf_counter()
         status = 500
+        # Gerado pelo servidor: um header enviado pelo cliente nunca vira prova de correlação.
+        request_id = uuid.uuid4().hex
         try:
             response = await call_next(request)
             status = response.status_code
+            response.headers["X-Demo-Request-Id"] = request_id
             return response
         finally:
             access_log.write(
                 {
                     "time": datetime.now(UTC).isoformat(timespec="milliseconds"),
+                    "request_id": request_id,
                     "client": request.client.host if request.client else None,
                     "method": request.method,
                     "path": request.url.path,
                     "query": request.url.query,
                     "status": status,
+                    "action": request_action(request.method, request.url.path),
+                    "tenant": getattr(request.state, "verified_tenant", None),
                     "duration_ms": round((time.perf_counter() - started) * 1000, 1),
                 }
             )

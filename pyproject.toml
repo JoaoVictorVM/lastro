@@ -25,6 +25,7 @@ dependencies = [
 lastro = "lastro.cli.app:main"
 lastro-browser = "lastro.browser.server:main"
 lastro-permission-hook = "lastro.browser.permissions:main"
+lastro-eval-browser = "lastro.evaluation.baseline:main"
 
 [project.optional-dependencies]
 native = [

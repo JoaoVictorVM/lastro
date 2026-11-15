@@ -9,6 +9,7 @@ from datetime import date, datetime
 
 from markupsafe import Markup
 
+from lastro_demo.flags import variant_parameter
 from lastro_demo.runtime import DemoRuntime
 from lastro_demo.validation import (
     MSG_CPF_DUPLICATE,
@@ -27,8 +28,8 @@ DIRECTIONS = ("asc", "desc")
 COLUMNS = "id, clinic_id, full_name, cpf, email, phone, role, hire_date, status"
 CPF_LENGTH = 11
 INTERMITTENT_RATE = 0.30
-TRUNCATED_NAME_LENGTH = 50
-CONTRACT_MISMATCH_ROLE = "fisioterapeuta"
+TRUNCATED_NAME_LENGTH = int(variant_parameter("base", "d06_truncate_length"))
+CONTRACT_MISMATCH_ROLE = str(variant_parameter("base", "d10_rejected_role"))
 _CPF_QUERY = re.compile(r"^[\d.\-\s]+$")
 
 
@@ -191,16 +192,25 @@ def _cpf_taken(
     return any(same(str(row["cpf"])) and int(row["id"]) != exclude_id for row in rows)
 
 
+def truncate_length(runtime: DemoRuntime) -> int:
+    return int(variant_parameter(runtime.flags.variant, "d06_truncate_length"))
+
+
+def rejected_role(runtime: DemoRuntime) -> str:
+    return str(variant_parameter(runtime.flags.variant, "d10_rejected_role"))
+
+
 def _stored_name(name: str, runtime: DemoRuntime) -> str:
-    if runtime.flags.defect("d06") and len(name) > TRUNCATED_NAME_LENGTH:
+    limit = truncate_length(runtime)
+    if runtime.flags.defect("d06") and len(name) > limit:
         # Defeito d06: o nome é cortado em silêncio antes de gravar.
-        return name[:TRUNCATED_NAME_LENGTH]
+        return name[:limit]
     return name
 
 
 def _role_rejected(data: EmployeeInput, runtime: DemoRuntime) -> bool:
     # Defeito d10: o back-end recusa um perfil que o formulário oferece.
-    return runtime.flags.defect("d10") and data.role == CONTRACT_MISMATCH_ROLE
+    return runtime.flags.defect("d10") and data.role == rejected_role(runtime)
 
 
 def _shown(employee_id: int, tenant_id: str, data: EmployeeInput) -> Employee:

@@ -55,13 +55,15 @@ class ToolOutcome:
     is_error: bool
 
 
-def expected_catalog(reproduction: bool = False) -> list[CatalogTool]:
+def expected_catalog(
+    reproduction: bool = False, disabled: frozenset[str] = frozenset()
+) -> list[CatalogTool]:
     """Mesmo catálogo anunciado aos executores externos, sem aliases nem tools novas."""
     from lastro.browser.tools import catalog, input_schema
 
     return [
         CatalogTool(name, "Run-scoped Lastro tool: " + name, input_schema(name))
-        for name in catalog(reproduction)
+        for name in catalog(reproduction, disabled)
     ]
 
 

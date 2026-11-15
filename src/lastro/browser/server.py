@@ -69,7 +69,10 @@ async def serve(
                 description="Run-scoped Lastro tool: " + name,
                 inputSchema=input_schema(name),
             )
-            for name in catalog(runtime is not None and runtime.reproduction)
+            for name in catalog(
+                runtime is not None and runtime.reproduction,
+                runtime.disabled_tools if runtime is not None else frozenset(),
+            )
         ]
 
     @server.call_tool(validate_input=False)
