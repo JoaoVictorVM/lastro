@@ -74,8 +74,10 @@ jobs:
           uv run pytest -q -p no:cacheprovider tests/unit tests/repository
           tests/integration/test_cli_native.py::test_base_install_does_not_import_native_extra
 
-      - name: Install the native and obs extras
-        run: uv sync --locked --extra native --extra obs
+      # O extra sources traz extração, embeddings locais e sqlite-vec; o modelo real não é
+      # baixado no CI, os testes usam um dublê determinístico.
+      - name: Install the native, obs and sources extras
+        run: uv sync --locked --extra native --extra obs --extra sources
 
       # The authentication tests drive a real Chromium; Linux also needs its system libraries.
       - name: Install Playwright Chromium

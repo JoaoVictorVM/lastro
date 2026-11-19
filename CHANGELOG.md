@@ -12,6 +12,15 @@ list the intended scope and contain no shipped changes until their release date 
 
 ### Added
 
+- Documentation knowledge sources with the `sources` extra: `lastro sources add`, `sync`,
+  `list` and `model prepare` index local Markdown, text, HTML and PDF folders with a local
+  multilingual embedding model, safe reading, secret scanning and atomic generations. Runs
+  get cited passages from hybrid FTS5 and vector search through `sources_query`, report
+  divergences between sources with `sources_report_conflict`, keep documentation-declared
+  facts in memory with their provenance, and reports list the sources per finding and the
+  open conflicts. The `retrieval-eval` extra measures retrieval with Ragas on the demo
+  documentation through the evaluation harness. Code-inferred knowledge cards are not
+  included yet.
 - Evaluation harness with the `eval` extra: `lastro eval run`, `resume`, `show`, `export` and
   `review export|import`, distributed `demo-core`, `demo-scenarios` and `demo-memory` suites,
   a bare-agent baseline contained to the managed demo, one-at-a-time ablations bound to the

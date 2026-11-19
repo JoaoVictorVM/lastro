@@ -29,6 +29,7 @@ from lastro.history import (
     Finding,
     FindingClassification,
     HistoryStore,
+    JsonObject,
     PolicyDecision,
     ReportConflictError,
     ReportingError,
@@ -46,6 +47,8 @@ from lastro.history.errors import UnsafeArtifactPathError
 from lastro.reporting.models import (
     BlockView,
     ChangeContextView,
+    ConflictSideView,
+    ConflictView,
     CreatedRecordView,
     CriterionView,
     EnvironmentView,
@@ -59,6 +62,7 @@ from lastro.reporting.models import (
     ReportData,
     ReproductionView,
     SignalView,
+    SourceView,
     SummaryView,
     TraceView,
     VerdictView,
@@ -136,6 +140,8 @@ def _strip_finding_defaults(item: dict[str, Any]) -> None:
     """Achados sem veredito nem tag mantêm o digest anterior à reprodução."""
     if item.get("verdict") is None:
         item.pop("verdict", None)
+    if not item.get("sources"):
+        item.pop("sources", None)
     if item.get("intermittent") is False:
         item.pop("intermittent", None)
     for attempt in cast(list[dict[str, Any]], item.get("reproduction_attempts") or []):
@@ -155,6 +161,10 @@ def data_sha256(data: ReportData) -> str:
         content.pop("execution", None)
     if content.get("trace") is None:
         content.pop("trace", None)
+    if not content.get("source_conflicts"):
+        content.pop("source_conflicts", None)
+    if not content.get("documentation_queries"):
+        content.pop("documentation_queries", None)
     for group in ("confirmed", "suspected", "harness_failures"):
         for item in cast(list[dict[str, Any]], content.get(group) or []):
             _strip_finding_defaults(item)
@@ -316,11 +326,77 @@ def _verdict_view(verdict: ReproductionVerdict | None) -> VerdictView | None:
     )
 
 
+def _source_views(finding: Finding, references: dict[str, JsonObject]) -> tuple[SourceView, ...]:
+    """Passagem citada como foi entregue; referência antiga ou desconhecida fica marcada."""
+    if finding.expected_source.value != "documentation" or not finding.expected_source_ref:
+        return ()
+    snapshot = references.get(finding.expected_source_ref)
+    if snapshot is None:
+        return (
+            SourceView(
+                reference_id=finding.expected_source_ref,
+                citation=finding.expected_source_ref,
+                heading="",
+                file_sha256="",
+                modified_at=None,
+                text="",
+                legacy=True,
+            ),
+        )
+    version = snapshot.get("version")
+    version = cast(JsonObject, version) if isinstance(version, dict) else {}
+    modified = version.get("modified_at")
+    return (
+        SourceView(
+            reference_id=finding.expected_source_ref,
+            citation=str(snapshot.get("citation", "")),
+            heading=str(snapshot.get("heading", "")),
+            file_sha256=str(version.get("file_sha256", "")),
+            modified_at=modified if isinstance(modified, str) else None,
+            text=str(snapshot.get("text", "")),
+        ),
+    )
+
+
+def _side(snapshot: JsonObject) -> ConflictSideView:
+    kind = str(snapshot.get("kind", ""))
+    label = {
+        "passage": snapshot.get("citation"),
+        "knowledge": snapshot.get("statement"),
+        "observation": snapshot.get("route"),
+        "criterion": snapshot.get("text"),
+        "clarification": snapshot.get("question"),
+        "controlled_file": snapshot.get("path"),
+    }.get(kind)
+    return ConflictSideView(
+        kind=kind,
+        source_type=str(snapshot.get("source_type", kind)),
+        label=str(label or snapshot.get("reference_id", "")),
+        quote=str(snapshot.get("quote", "")),
+    )
+
+
+def _conflicts(inputs: ReportInputs) -> tuple[ConflictView, ...]:
+    return tuple(
+        ConflictView(
+            id=item.id,
+            flow=item.flow,
+            assessment=item.assessment.value,
+            status=item.status,
+            left=_side(item.left),
+            right=_side(item.right),
+            explanation=item.explanation,
+        )
+        for item in inputs.source_conflicts
+    )
+
+
 def _finding_view(
     finding: Finding,
     artifacts: dict[str, ArtifactRecord],
     present: dict[str, bool],
     verdict: ReproductionVerdict | None = None,
+    references: dict[str, JsonObject] | None = None,
 ) -> FindingView:
     return FindingView(
         id=finding.id,
@@ -361,6 +437,7 @@ def _finding_view(
         created_at=finding.created_at,
         intermittent=finding.intermittent,
         verdict=_verdict_view(verdict),
+        sources=_source_views(finding, references or {}),
     )
 
 
@@ -444,8 +521,14 @@ def project(
         if item.artifact_type != ArtifactType.REPORT
     }
     verdicts = {item.finding_id: item for item in inputs.verdicts}
+    references = {
+        str(item.get("reference_id")): item
+        for item in inputs.source_references
+        if item.get("reference_id")
+    }
     findings = [
-        _finding_view(item, artifacts, present, verdicts.get(item.id)) for item in inputs.findings
+        _finding_view(item, artifacts, present, verdicts.get(item.id), references)
+        for item in inputs.findings
     ]
     system = [item for item in findings if item.failure_domain == FailureDomain.SYSTEM.value]
     results = {item.criterion_id: item for item in inputs.criterion_results}
@@ -523,6 +606,7 @@ def project(
     limitations += [MISSING_EVIDENCE.format(path=path) for path in missing]
     limitations += [f"{item.id}: {text}" for item in findings for text in item.limitations]
     limitations += _reproduction_limitations(run, system)
+    limitations += _source_limitations(inputs, findings)
     summary = SummaryView(
         status=run.status.value,
         status_reason=run.status_reason,
@@ -583,7 +667,29 @@ def project(
             if inputs.trace is not None
             else None
         ),
+        source_conflicts=_conflicts(inputs),
+        documentation_queries=len(inputs.source_queries),
     )
+
+
+def _source_limitations(inputs: ReportInputs, findings: list[FindingView]) -> list[str]:
+    """Limites da consulta documental: truncamento e referências que não podem ser conferidas."""
+    lines: list[str] = []
+    truncated = [item for item in inputs.source_queries if item.get("truncated")]
+    if truncated:
+        omitted = sum(int(cast(int, item.get("omitted_count", 0))) for item in truncated)
+        lines.append(
+            f"{len(truncated)} documentation query(ies) were truncated; {omitted} whole "
+            "passage(s) were not delivered."
+        )
+    lines += [
+        f"{item.id}: documentation reference {source.reference_id} is a legacy or unknown "
+        "reference and was not verified."
+        for item in findings
+        for source in item.sources
+        if source.legacy
+    ]
+    return lines
 
 
 def _reproduction_limitations(run: RunRecord, system: list[FindingView]) -> list[str]:

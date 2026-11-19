@@ -155,7 +155,7 @@ def test_reparse_swap_fails_closed(git_repo: GitRepo, gitleaks: str, tmp_path: P
     class SwappingReader(SafeReader):
         swapped = False
 
-        def read(self, relative: str, max_bytes: int = 1_000_000) -> bytes:
+        def read(self, relative: str, max_bytes: int | None = None) -> bytes:
             if relative == "src/sub/x.py" and not self.swapped:
                 self.swapped = True
                 (git_repo.root / "src" / "sub").rename(git_repo.root / "src" / "sub_old")

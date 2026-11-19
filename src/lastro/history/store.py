@@ -36,6 +36,7 @@ from lastro.execution.models import (
 )
 from lastro.history import approvals, execution, knowledge, native, reproduction
 from lastro.history import observability as obs
+from lastro.history import sources as source_ledger
 from lastro.history.artifacts import (
     StoredFile,
     insert_artifact,
@@ -211,6 +212,7 @@ from lastro.history.runs import (
     select_run,
     validate_mission,
 )
+from lastro.history.sources import SourceRepository
 from lastro.knowledge import (
     Category,
     ConsolidationAttempt,
@@ -333,6 +335,18 @@ class HistoryStore:
     def evaluations(self) -> EvalRepository:
         """Registro das suites de avaliação deste projeto."""
         return EvalRepository(self._database, self._clock, self._entropy)
+
+    @property
+    def sources(self) -> SourceRepository:
+        """Catálogo documental do projeto; a busca vetorial usa conexão própria."""
+        return SourceRepository(
+            self._database, self._retrieval_database, self.project_id, self._clock
+        )
+
+    def _retrieval_database(self) -> Database:
+        from lastro.sources.retrieval import vec_connector
+
+        return Database(self._database.path, self._database.policy, connector=vec_connector)
 
     def _now(self) -> str:
         return db_timestamp(self._clock())
@@ -1632,6 +1646,13 @@ class HistoryStore:
                 version_observations=tuple(select_version_observations(conn, run_id)),
                 verdicts=tuple(reproduction.select_verdicts(conn, run_id)),
                 trace=_trace_link(conn, run_id),
+                source_references=tuple(
+                    source_ledger.select_run_references(conn, self.project_id, run_id)
+                ),
+                source_conflicts=tuple(source_ledger.run_conflicts(conn, self.project_id, run_id)),
+                source_queries=tuple(
+                    source_ledger.select_run_queries(conn, self.project_id, run_id)
+                ),
                 **self._execution_inputs(conn, run_id),
             )
 

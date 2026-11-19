@@ -52,7 +52,7 @@ package; each one is installed from its own distribution, which carries its lice
 | pyjwt | Jose Padilla | https://github.com/jpadilla/pyjwt | 2.15.1 | MIT | None | License text shipped with the package |
 | python-dotenv | Saurabh Kumar | https://github.com/theskumar/python-dotenv | 1.2.4 | BSD-3-Clause | None | License text shipped with the package |
 | python-multipart | Andrew Dunham and Marcelo Trylesinski | https://github.com/Kludex/python-multipart | 0.0.32 | Apache-2.0 | None | License and notices shipped with the package |
-| rich | Will McGugan (Textualize) | https://github.com/Textualize/rich | 15.0.0 | MIT | None | License text shipped with the package |
+| rich | Will McGugan (Textualize) | https://github.com/Textualize/rich | 14.3.4 | MIT | None | License text shipped with the package |
 | shellingham | Tzu-ping Chung | https://github.com/sarugaku/shellingham | 1.5.4 | ISC | None | License text shipped with the package |
 | starlette | Encode (Tom Christie) and Marcelo Trylesinski | https://github.com/Kludex/starlette | 1.10.0 | BSD-3-Clause | None | License text shipped with the package |
 | typer | Sebastián Ramírez | https://github.com/fastapi/typer | 0.27.3 | MIT | None | License text shipped with the package |
@@ -89,6 +89,106 @@ chromium` and is not distributed with Lastro.
 
 Development tools (ruff, pyright, pytest, pytest-cov, pre-commit, gitleaks and the
 pre-commit hooks) are used only to build and check Lastro and are not distributed with it.
+
+## Optional documentation sources dependencies
+
+Installed only with the `sources` extra (`uv sync --extra sources` or
+`pip install 'lastro[sources]'`). The base installation does not pull them.
+charset-normalizer, protobuf, requests and urllib3 also appear with the observability extra,
+at the same versions.
+
+| Project | Author or organization | URL | Version | License | Modifications | Required notices |
+|---|---|---|---|---|---|---|
+| beautifulsoup4 | Leonard Richardson | https://www.crummy.com/software/BeautifulSoup/ | 4.15.0 | MIT | None | License text shipped with the package |
+| charset-normalizer | Ahmed TAHRI | https://github.com/jawah/charset_normalizer | 3.5.2 | MIT | None | License text shipped with the package |
+| fastembed | Qdrant | https://github.com/qdrant/fastembed | 0.9.1 | Apache-2.0 | None | License and notices shipped with the package |
+| filelock | Bernát Gábor | https://github.com/tox-dev/py-filelock | 4.2.4 | MIT | None | License text shipped with the package |
+| flatbuffers | Google LLC | https://github.com/google/flatbuffers | 25.12.19 | Apache-2.0 | None | License and notices shipped with the package |
+| fsspec | Martin Durant (Anaconda) | https://github.com/fsspec/filesystem_spec | 2026.9.0 | BSD-3-Clause | None | License text shipped with the package |
+| hf-xet | Hugging Face, Inc. | https://github.com/huggingface/xet-core | 1.8.0 | Apache-2.0 | None | License and notices shipped with the package |
+| huggingface-hub | Hugging Face, Inc. | https://github.com/huggingface/huggingface_hub | 1.33.0 | Apache-2.0 | None | License and notices shipped with the package |
+| loguru | Delgan | https://github.com/Delgan/loguru | 0.7.3 | MIT | None | License text shipped with the package |
+| mmh3 | Hajime Senuma | https://github.com/hajimes/mmh3 | 5.3.1 | MIT | None | License text shipped with the package |
+| numpy | NumPy Developers | https://github.com/numpy/numpy | 2.5.5 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | None | License text shipped with the package |
+| onnxruntime | Microsoft Corporation | https://github.com/microsoft/onnxruntime | 1.32.0 | MIT | None | License text shipped with the package |
+| packaging | Donald Stufft and PyPA | https://github.com/pypa/packaging | 26.3 | Apache-2.0 OR BSD-2-Clause | None | License and notices shipped with the package |
+| pillow | Jeffrey A. Clark and contributors | https://github.com/python-pillow/Pillow | 13.0.0 | MIT-CMU | None | License text shipped with the package |
+| protobuf | Google LLC | https://github.com/protocolbuffers/protobuf | 7.36.2 | BSD-3-Clause | None | License text shipped with the package |
+| pypdf | Mathieu Fenniak and contributors | https://github.com/py-pdf/pypdf | 7.1.1 | BSD-3-Clause | None | License text shipped with the package |
+| py-rust-stemmers | Qdrant | https://github.com/qdrant/py-rust-stemmers | 0.1.8 | MIT | None | License text shipped with the package |
+| pyyaml | Kirill Simonov and contributors | https://github.com/yaml/pyyaml | 6.0.3 | MIT | None | License text shipped with the package |
+| requests | Kenneth Reitz and contributors | https://github.com/psf/requests | 2.34.2 | Apache-2.0 | None | License and notices shipped with the package |
+| soupsieve | Isaac Muse | https://github.com/facelessuser/soupsieve | 4.1.2 | MIT | None | License text shipped with the package |
+| sqlite-vec | Alex Garcia | https://github.com/asg017/sqlite-vec | 0.1.9 | MIT OR Apache-2.0 | None | License and notices shipped with the package |
+| tokenizers | Hugging Face, Inc. | https://github.com/huggingface/tokenizers | 0.23.3 | Apache-2.0 | None | License and notices shipped with the package |
+| tqdm | tqdm developers | https://github.com/tqdm/tqdm | 4.70.1 | MPL-2.0 AND MIT | None | Source available at the project URL, as MPL-2.0 requires; license texts shipped with the package |
+| urllib3 | Andrey Petrov and contributors | https://github.com/urllib3/urllib3 | 2.8.0 | MIT | None | License text shipped with the package |
+| win32-setctime (Windows only) | Delgan | https://github.com/Delgan/win32-setctime | 1.2.1 | MIT | None | License text shipped with the package |
+
+The embedding model `intfloat/multilingual-e5-large` (MIT, by Liang Wang et al.), in the
+ONNX conversion published by Qdrant on Hugging Face (`Qdrant/multilingual-e5-large-onnx`),
+is downloaded only by the explicit command `lastro sources model prepare`, into the private
+data root. It is not distributed with Lastro, and sync or queries never download it.
+
+## Optional retrieval evaluation dependencies
+
+Installed only with the `retrieval-eval` extra (`uv sync --extra retrieval-eval` or
+`pip install 'lastro[retrieval-eval]'`), which also brings the `sources` and `eval` extras.
+Ragas only scores retrieval quality; it never runs during an exploration.
+
+| Project | Author or organization | URL | Version | License | Modifications | Required notices |
+|---|---|---|---|---|---|---|
+| ragas | Vibrant Labs (Exploding Gradients) and contributors | https://github.com/vibrantlabsai/ragas | 0.4.4 | Apache-2.0 | None | License and notices shipped with the package |
+| aiohappyeyeballs | J. Nick Koston | https://github.com/aio-libs/aiohappyeyeballs | 2.7.1 | PSF-2.0 | None | License text shipped with the package |
+| aiohttp | aiohttp team | https://github.com/aio-libs/aiohttp | 3.14.5 | Apache-2.0 AND MIT | None | License and notices shipped with the package |
+| aiosignal | aiohttp team | https://github.com/aio-libs/aiosignal | 1.4.0 | Apache-2.0 | None | License and notices shipped with the package |
+| appdirs | Trent Mick | https://github.com/ActiveState/appdirs | 1.4.4 | MIT | None | License text shipped with the package |
+| datasets | Hugging Face, Inc. | https://github.com/huggingface/datasets | 5.2.0 | Apache-2.0 | None | License and notices shipped with the package |
+| dill | Mike McKerns | https://github.com/uqfoundation/dill | 0.4.1 | BSD-3-Clause | None | License text shipped with the package |
+| diskcache | Grant Jenks | https://github.com/grantjenks/python-diskcache | 5.6.3 | Apache-2.0 | None | License and notices shipped with the package |
+| distro | Nir Cohen | https://github.com/python-distro/distro | 1.9.0 | Apache-2.0 | None | License and notices shipped with the package |
+| docstring-parser | Marcin Kurczewski | https://github.com/rr-/docstring_parser | 0.18.0 | MIT | None | License text shipped with the package |
+| frozenlist | aiohttp team | https://github.com/aio-libs/frozenlist | 1.8.0 | Apache-2.0 | None | License and notices shipped with the package |
+| httpcore2 | Tom Christie and Pydantic | https://github.com/pydantic/httpx2 | 2.16.0 | BSD-3-Clause | None | License text shipped with the package |
+| httpx2 | Tom Christie and Pydantic | https://github.com/pydantic/httpx2 | 2.16.0 | BSD-3-Clause | None | License text shipped with the package |
+| instructor | Jason Liu, Ivan Leo | https://github.com/567-labs/instructor | 1.17.0 | MIT | None | License text shipped with the package |
+| jiter | Samuel Colvin (Pydantic) | https://github.com/pydantic/jiter | 0.14.0 | MIT | None | License text shipped with the package |
+| jsonpatch | Stefan Kögl | https://github.com/stefankoegl/python-json-patch | 1.41 | BSD-3-Clause | None | License text shipped with the package |
+| jsonpointer | Stefan Kögl | https://github.com/stefankoegl/python-json-pointer | 3.8 | BSD-3-Clause | None | License text shipped with the package |
+| langchain, langchain-classic, langchain-core, langchain-openai, langchain-text-splitters | LangChain, Inc. | https://github.com/langchain-ai/langchain | 1.5.2, 1.0.8, 1.8.3, 1.8.3, 1.1.3 | MIT | None | License text shipped with the package |
+| langchain-community | LangChain, Inc. | https://github.com/langchain-ai/langchain-community | 0.4.2 | MIT | None | License text shipped with the package |
+| langchain-protocol | LangChain, Inc. | https://github.com/langchain-ai/agent-protocol | 0.0.20 | MIT | None | License text shipped with the package |
+| langgraph, langgraph-checkpoint, langgraph-prebuilt, langgraph-sdk | LangChain, Inc. | https://github.com/langchain-ai/langgraph | 1.2.19, 4.3.1, 1.1.1, 0.4.12 | MIT | None | License text shipped with the package |
+| langsmith | LangChain, Inc. | https://github.com/langchain-ai/langsmith-sdk | 0.14.17 | MIT | None | License text shipped with the package |
+| multidict | Andrew Svetlov | https://github.com/aio-libs/multidict | 7.2.1 | Apache-2.0 | None | License and notices shipped with the package |
+| multiprocess | Mike McKerns | https://github.com/uqfoundation/multiprocess | 0.70.19 | BSD-3-Clause | None | License text shipped with the package |
+| nest-asyncio | Ewald R. de Wit | https://github.com/erdewit/nest_asyncio | 1.6.0 | BSD-2-Clause | None | License text shipped with the package |
+| networkx | NetworkX Developers | https://github.com/networkx/networkx | 3.7 | BSD-3-Clause | None | License text shipped with the package |
+| openai | OpenAI | https://github.com/openai/openai-python | 3.3.0 | Apache-2.0 | None | License and notices shipped with the package |
+| orjson | ijl | https://github.com/ijl/orjson | 3.13.0 | MPL-2.0 AND (Apache-2.0 OR MIT) | None | Source available at the project URL, as MPL-2.0 requires; license texts shipped with the package |
+| ormsgpack | Aviram Hassan, Emanuele Giaquinta | https://github.com/ormsgpack/ormsgpack | 1.13.0 | Apache-2.0 OR MIT | None | License and notices shipped with the package |
+| pandas | The Pandas Development Team | https://github.com/pandas-dev/pandas | 3.1.1 | BSD-3-Clause | None | License text shipped with the package |
+| propcache | Andrew Svetlov | https://github.com/aio-libs/propcache | 0.5.4 | Apache-2.0 | None | License and notices shipped with the package |
+| pyarrow | Apache Arrow Developers | https://github.com/apache/arrow | 26.0.1 | Apache-2.0 | None | License and notices shipped with the package |
+| python-dateutil | Gustavo Niemeyer and contributors | https://github.com/dateutil/dateutil | 4.0.0 | BSD-3-Clause | None | License text shipped with the package |
+| regex | Matthew Barnett | https://github.com/mrabarnett/mrab-regex | 2026.11.19 | Apache-2.0 AND CNRI-Python | None | License and notices shipped with the package |
+| requests-toolbelt | Ian Cordasco, Cory Benfield | https://github.com/requests/toolbelt | 1.0.0 | Apache-2.0 | None | License and notices shipped with the package |
+| scikit-network | Scikit-network team | https://github.com/sknetwork-team/scikit-network | 0.33.5 | BSD-3-Clause | None | License text shipped with the package |
+| scipy | SciPy Developers | https://github.com/scipy/scipy | 1.18.1 | BSD-3-Clause | None | License text shipped with the package |
+| sniffio | Nathaniel J. Smith | https://github.com/python-trio/sniffio | 1.3.1 | MIT OR Apache-2.0 | None | License and notices shipped with the package |
+| sqlalchemy | Mike Bayer and contributors | https://github.com/sqlalchemy/sqlalchemy | 2.1.9 | MIT | None | License text shipped with the package |
+| tenacity | Julien Danjou | https://github.com/jd/tenacity | 9.2.1 | Apache-2.0 | None | License and notices shipped with the package |
+| tiktoken | OpenAI, Shantanu Jain | https://github.com/openai/tiktoken | 0.14.0 | MIT | None | License text shipped with the package |
+| truststore | Seth Michael Larson, David Glick | https://github.com/sethmlarson/truststore | 0.10.5 | MIT | None | License text shipped with the package |
+| uuid-utils | Amin Alaee | https://github.com/aminalaee/uuid-utils | 0.19.0 | BSD-3-Clause | None | License text shipped with the package |
+| websockets | Aymeric Augustin and contributors | https://github.com/python-websockets/websockets | 17.4 | BSD-3-Clause | None | License text shipped with the package |
+| xxhash | Yue Du | https://github.com/ifduyue/python-xxhash | 4.0.2 | BSD-2-Clause | None | License text shipped with the package |
+| yarl | Andrew Svetlov | https://github.com/aio-libs/yarl | 1.25.1 | Apache-2.0 | None | License and notices shipped with the package |
+| zstandard | Gregory Szorc | https://github.com/indygreg/python-zstandard | 0.25.0 | BSD-3-Clause | None | License text shipped with the package |
+
+In the repository lockfile these packages share one resolution with the rest of the
+project, so the locked development environment uses rich 14.3.4, as Ragas requires. A plain
+`pip install lastro` resolves its own versions and is not affected.
 
 ## Browser protocol dependencies
 

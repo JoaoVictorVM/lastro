@@ -17,6 +17,7 @@ from lastro.browser.tools import (
     KNOWLEDGE_MODELS,
     NO_ACTIVE_RUN,
     NO_RUN,
+    SOURCES_MODELS,
     BrowserTools,
     catalog,
     input_schema,
@@ -81,7 +82,7 @@ async def serve(
 
         if runtime is not None:
             result = await runtime.call(name, arguments)
-        elif name in KNOWLEDGE_MODELS:
+        elif name in KNOWLEDGE_MODELS or name in SOURCES_MODELS:
             result = {"error": NO_ACTIVE_RUN, "message": NO_RUN}
         else:
             result = {"error": NO_RUN}

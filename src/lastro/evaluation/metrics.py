@@ -9,7 +9,7 @@ import hashlib
 import json
 import math
 import statistics
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,6 +21,7 @@ from lastro.history.evaluation import (
     JudgmentRecord,
     MeasurementInput,
     ResultInput,
+    RetrievalSampleRecord,
     ReviewRecord,
     TrialRecord,
 )
@@ -571,3 +572,107 @@ def recompute(history: HistoryStore, suite_id: str, project_dir: Path) -> int:
     results = [item for item in results if item.stratum.get("role") != TrialRole.WARMUP.value]
     rows = [(item.attempt.id, m) for item in measured for m in item.measures]
     return repo.save_revision(suite_id, rows, results)
+
+
+# Recuperação documental ----------------------------------------------------------------------
+
+
+def retrieval_results(
+    samples: Sequence[RetrievalSampleRecord],
+    trials: Sequence[TrialRecord],
+    executor: Mapping[str, Any],
+    runs_per_condition: int,
+    metrics: Sequence[str],
+) -> tuple[list[tuple[str, MeasurementInput]], list[ResultInput]]:
+    """Agregados `retrieval.*` só de amostras de trials válidos, com N real e exclusões.
+
+    Perguntas e repetições nunca viram amostras independentes a mais: o agregado geral usa
+    cada (pergunta, repetição) uma vez e o por pergunta usa as repetições daquela pergunta.
+    Métrica ausente entra em `excluded_n` com o motivo, nunca como zero.
+    """
+    from collections import Counter
+
+    selected = {
+        item.selected_attempt_id
+        for item in trials
+        if item.status == "valid" and item.selected_attempt_id is not None
+    }
+    measured = [item for item in trials if item.status != "not_applicable"]
+    invalid = sum(1 for item in measured if item.status == "invalid")
+    valid_samples = [item for item in samples if item.attempt_id in selected]
+    measurements: list[tuple[str, MeasurementInput]] = []
+    for sample in valid_samples:
+        for metric in metrics:
+            outcome = as_map(sample.metrics.get(metric))
+            value = outcome.get("value")
+            number = float(value) if isinstance(value, int | float) else None
+            measurements.append(
+                (
+                    sample.attempt_id,
+                    MeasurementInput(
+                        metric=metric,
+                        unit="ratio",
+                        value=number,
+                        unavailable_reason=None if number is not None else outcome.get("reason"),
+                        complete=number is not None,
+                        source_refs=(sample.id,),
+                    ),
+                )
+            )
+    base = {
+        "purpose": "retrieval",
+        "executor": executor.get("name"),
+        "executor_version": executor.get("version"),
+        "condition": "full",
+        "variant": "base",
+    }
+    inputs = hashlib.sha256(
+        json.dumps(sorted(item.input_sha256 for item in valid_samples)).encode("utf-8")
+    ).hexdigest()
+
+    def aggregate(
+        scope: str, chosen: list[RetrievalSampleRecord], planned: int, invalid_n: int
+    ) -> list[ResultInput]:
+        rows: list[ResultInput] = []
+        stratum = {**base, "scenario": scope}
+        for metric in metrics:
+            values: list[float] = []
+            reasons: Counter[str] = Counter()
+            for sample in chosen:
+                outcome = as_map(sample.metrics.get(metric))
+                value = outcome.get("value")
+                if isinstance(value, int | float) and not isinstance(value, bool):
+                    values.append(float(value))
+                else:
+                    reasons[str(outcome.get("reason") or "missing")] += 1
+            limitations = [
+                f"excluded:{reason}={count}" for reason, count in sorted(reasons.items())
+            ]
+            if len(values) < planned:
+                limitations.append("incomplete")
+            rows.append(
+                ResultInput(
+                    stratum=stratum,
+                    stratum_key=stratum_key(stratum),
+                    metric=metric,
+                    unit="ratio",
+                    n=len(values),
+                    planned_n=planned,
+                    invalid_n=invalid_n,
+                    excluded_n=sum(reasons.values()),
+                    mean=statistics.fmean(values) if values else None,
+                    sample_stddev=statistics.stdev(values) if len(values) >= 2 else None,
+                    complete=len(values) == planned,
+                    limitations=tuple(limitations),
+                    inputs_sha256=inputs,
+                )
+            )
+        return rows
+
+    results = aggregate("all", valid_samples, len(measured), invalid)
+    questions = sorted({item.scenario for item in measured})
+    for question in questions:
+        own = [item for item in valid_samples if item.question_id == question]
+        bad = sum(1 for item in measured if item.scenario == question and item.status == "invalid")
+        results += aggregate(question, own, runs_per_condition, bad)
+    return measurements, results

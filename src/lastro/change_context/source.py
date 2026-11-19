@@ -194,9 +194,10 @@ class SafeReader:
     propriedades exclui o candidato.
     """
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, max_bytes: int = MAX_FILE_BYTES) -> None:
         self.root = root
         self.real_root = Path(os.path.realpath(root))
+        self.max_bytes = max_bytes
 
     def lstat(self, relative: str) -> os.stat_result:
         """Valida todos os ancestrais e o próprio caminho sem segui-los."""
@@ -215,7 +216,8 @@ class SafeReader:
             raise UnsafeFile(UNSAFE_PATH)
         return info
 
-    def read(self, relative: str, max_bytes: int = MAX_FILE_BYTES) -> bytes:
+    def read(self, relative: str, max_bytes: int | None = None) -> bytes:
+        max_bytes = self.max_bytes if max_bytes is None else max_bytes
         if not is_safe_relative(relative):
             raise UnsafeFile(UNSAFE_PATH)
         before = self.lstat(relative)
@@ -224,9 +226,9 @@ class SafeReader:
         if before.st_size > max_bytes:
             raise UnsafeFile(OVERSIZED)
         data = (
-            self._read_posix(relative)
+            self._read_posix(relative, max_bytes)
             if sys.platform != "win32"
-            else self._read_windows(relative, before)
+            else self._read_windows(relative, before, max_bytes)
         )
         after = self.lstat(relative)
         if (after.st_ino, after.st_size, after.st_mtime_ns) != (
@@ -237,7 +239,7 @@ class SafeReader:
             raise UnsafeFile(UNSTABLE)
         return data
 
-    def _read_posix(self, relative: str) -> bytes:
+    def _read_posix(self, relative: str, max_bytes: int) -> bytes:
         nofollow = getattr(os, "O_NOFOLLOW", 0)
         directory = getattr(os, "O_DIRECTORY", 0)
         parts = relative.split("/")
@@ -256,9 +258,9 @@ class SafeReader:
                 raise UnsafeFile(SYMLINK) from None
         finally:
             os.close(fd)
-        return self._drain(handle)
+        return self._drain(handle, max_bytes)
 
-    def _read_windows(self, relative: str, before: os.stat_result) -> bytes:
+    def _read_windows(self, relative: str, before: os.stat_result, max_bytes: int) -> bytes:
         path = self.root.joinpath(*relative.split("/"))
         handle = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
         try:
@@ -271,10 +273,10 @@ class SafeReader:
         except BaseException:
             os.close(handle)
             raise
-        return self._drain(handle)
+        return self._drain(handle, max_bytes)
 
     @staticmethod
-    def _drain(handle: int) -> bytes:
+    def _drain(handle: int, max_bytes: int) -> bytes:
         try:
             chunks: list[bytes] = []
             total = 0
@@ -283,7 +285,7 @@ class SafeReader:
                 if not chunk:
                     break
                 total += len(chunk)
-                if total > MAX_FILE_BYTES:
+                if total > max_bytes:
                     raise UnsafeFile(OVERSIZED)
                 chunks.append(chunk)
             return b"".join(chunks)

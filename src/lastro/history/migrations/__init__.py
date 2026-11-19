@@ -25,6 +25,7 @@ from lastro.history.migrations import (
     v011_reproduction,
     v012_observability,
     v013_evaluation,
+    v014_knowledge_sources,
 )
 from lastro.timeutil import utc_now_iso
 
@@ -68,6 +69,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     Migration.from_module(v011_reproduction),
     Migration.from_module(v012_observability),
     Migration.from_module(v013_evaluation),
+    Migration.from_module(v014_knowledge_sources),
 )
 
 

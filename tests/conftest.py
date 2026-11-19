@@ -91,6 +91,7 @@ def doctor_env() -> Callable[..., DoctorEnvironment]:
             "http_status": lambda url, timeout: 200,
             "git_check_ignore": lambda path: True,
             "environ": os.environ,
+            "sources_status": lambda root: None,
         }
         values.update(overrides)
         return DoctorEnvironment(**values)  # type: ignore[arg-type]

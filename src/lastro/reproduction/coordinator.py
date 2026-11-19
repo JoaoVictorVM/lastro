@@ -200,6 +200,15 @@ class ReproductionCoordinator:
                 )
         return chosen
 
+    def _documentation(self, finding: Finding) -> tuple[tuple[str, str], ...]:
+        """Só a passagem entregue à run do achado; referência desconhecida não é herdada."""
+        if finding.expected_source.value != "documentation" or not finding.expected_source_ref:
+            return ()
+        snapshot = self.history.sources.run_reference(finding.run_id, finding.expected_source_ref)
+        if snapshot is None:
+            return ()
+        return ((str(snapshot.get("citation", "")), str(snapshot.get("text", ""))),)
+
     def reproduce(
         self, finding: Finding, opened: ReproductionRound, settings: ReproductionSettings
     ) -> ReproductionVerdict:
@@ -212,7 +221,7 @@ class ReproductionCoordinator:
             for item in finding.reproduction_attempts
             if item.child_run_id in linked
         }
-        brief = build_brief(finding, self._entity(finding))
+        brief = build_brief(finding, self._entity(finding), self._documentation(finding))
         results: list[AttemptResult] = []
         executor_note: str | None = None
         launcher = self.launchers.get(verifier)

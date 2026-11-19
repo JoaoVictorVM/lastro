@@ -33,7 +33,7 @@ def explored(history_context: ProjectContext) -> tuple[HistoryStore, str, str]:
             preconditions=(),
             steps=("Editar", "Salvar", "Reabrir"),
             expected="Telefone novo",
-            expected_source=ExpectedSource.DOCUMENTATION,
+            expected_source=ExpectedSource.USER_ANSWER,
             expected_source_ref="manual do cadastro",
             observed="Telefone antigo",
             evidence=(EvidenceReference(shot.id, EvidencePurpose.STATE),),

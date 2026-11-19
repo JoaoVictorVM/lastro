@@ -705,6 +705,14 @@ def default_executor(name: str, model: str | None, write: Writer) -> HeadlessExe
     raise EvalError("executor_unavailable", f"unknown executor {name}")
 
 
+def default_answerer(name: str, model: str | None) -> JudgePort:
+    """Resposta da avaliação documental: a mesma sessão headless nova e sem tools do juiz.
+
+    O gerador recebe só pergunta e contextos; nunca catálogo de respostas nem histórico.
+    """
+    return default_judge(name, model)
+
+
 def default_judge(name: str, model: str | None) -> JudgePort:
     if name == "claude-code":
         return ClaudeJudge(model=model)

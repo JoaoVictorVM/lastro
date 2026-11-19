@@ -70,6 +70,37 @@ def default_deps(
 DEPS_FACTORY: DepsFactory = default_deps
 
 
+def default_retrieval_deps(
+    history: HistoryStore,
+    project_dir: Path,
+    project_root: Path,
+    private_root: Path,
+    executor_name: str,
+    model: str | None,
+    judge_name: str,
+    judge_model: str | None,
+    progress: Callable[[Any], None],
+) -> Any:
+    """Resposta e Ragas por sessões headless sem tools; índice isolado com o modelo local."""
+    from lastro.evaluation.executors import default_answerer, default_judge
+    from lastro.evaluation.ragas_adapter import RagasAdapter
+    from lastro.evaluation.retrieval import RetrievalDeps, default_service
+
+    return RetrievalDeps(
+        history=history,
+        project_dir=project_dir,
+        project_root=project_root,
+        answerer=default_answerer(executor_name, model),
+        judge=default_judge(judge_name, judge_model),
+        ragas=RagasAdapter(),
+        service_factory=default_service(private_root),
+        progress=progress,
+    )
+
+
+RETRIEVAL_DEPS_FACTORY: DepsFactory = default_retrieval_deps
+
+
 def _fail(exc: EvalError) -> typer.Exit:
     output.error(f"{exc.code}: {exc.message}")
     code = USAGE_EXIT_CODE
@@ -175,6 +206,7 @@ def _execute(
     ctx: typer.Context, suite_id: str, *, resume: bool, as_json: bool, executor: str | None = None
 ) -> None:
     from lastro.evaluation.export import export
+    from lastro.evaluation.retrieval import is_retrieval
     from lastro.evaluation.runner import SuiteRunner
     from lastro.evaluation.suites import spec_from_manifest
 
@@ -184,6 +216,9 @@ def _execute(
     except HistoryError as exc:
         output.error(str(exc))
         raise typer.Exit(code=USAGE_EXIT_CODE) from None
+    if is_retrieval(suite):
+        _execute_retrieval(ctx, history, suite_id, resume=resume, as_json=as_json)
+        return
     spec = spec_from_manifest(suite.manifest)
     judge_name = spec.judge.executor or suite.executor_name
     try:
@@ -222,6 +257,94 @@ def _execute(
         raise typer.Exit(code=outcome.exit_code)
 
 
+def _retrieval_deps(
+    ctx: typer.Context,
+    history: HistoryStore,
+    executor: str,
+    model: str | None,
+    judge: str,
+    judge_model: str | None,
+) -> Any:
+    project = get_state(ctx).require_history_project()
+    return RETRIEVAL_DEPS_FACTORY(
+        history,
+        history.project_dir,
+        project.loaded.project_dir,
+        project.private_data_root,
+        executor,
+        model,
+        judge,
+        judge_model,
+        _progress,
+    )
+
+
+def _execute_retrieval(
+    ctx: typer.Context, history: HistoryStore, suite_id: str, *, resume: bool, as_json: bool
+) -> None:
+    from lastro.evaluation.export import export
+    from lastro.evaluation.retrieval import RetrievalRunner, suite_spec
+
+    _, _, _, timezone, root = _open(ctx)
+    suite = history.evaluations.get_suite(suite_id)
+    spec = suite_spec(suite.manifest)
+    try:
+        deps = _retrieval_deps(
+            ctx,
+            history,
+            suite.executor_name,
+            spec.model,
+            spec.judge.executor or suite.executor_name,
+            spec.judge.model,
+        )
+        outcome = RetrievalRunner(deps).run(suite_id, resume=resume)
+    except EvalError as exc:
+        raise _fail(exc) from None
+    except HistoryError as exc:
+        output.error(str(exc))
+        raise typer.Exit(code=HISTORY_ERROR_EXIT_CODE) from None
+    path: Path | None = None
+    try:
+        path = export(history, suite_id, public=True, root=root, timezone=timezone)
+    except OSError as exc:
+        output.error(f"export_failed: {exc}; results stay in the history")
+    _report(history, suite_id, as_json, path)
+    if outcome.exit_code:
+        if outcome.exit_code == 4:
+            output.error(
+                f"Suite paused ({outcome.message}); continue with 'lastro eval resume {suite_id}'."
+            )
+        raise typer.Exit(code=outcome.exit_code)
+
+
+def _run_retrieval(ctx: typer.Context, suite: str, executor: str | None, as_json: bool) -> None:
+    from lastro.evaluation.retrieval import create_retrieval_suite, load_retrieval_suite
+
+    history, _, _, _, root = _open(ctx)
+    try:
+        loaded = load_retrieval_suite(suite, root, cwd=Path.cwd())
+        name = executor or loaded.spec.executor
+        judge_name = loaded.spec.judge.executor or name
+        deps = _retrieval_deps(
+            ctx, history, name, loaded.spec.model, judge_name, loaded.spec.judge.model
+        )
+        record = create_retrieval_suite(
+            history.evaluations,
+            loaded,
+            deps.answerer.identity().as_json(),
+            deps.judge.identity().as_json(),
+            deps.ragas.identity(),
+        )
+    except EvalError as exc:
+        raise _fail(exc) from None
+    message = f"Suite run {record.id} ({loaded.spec.id}, retrieval, executor {name})"
+    if as_json:
+        print(message, file=sys.stderr)
+    else:
+        output.info(message)
+    _execute_retrieval(ctx, history, record.id, resume=False, as_json=as_json)
+
+
 @eval_app.command("run")
 def run(
     ctx: typer.Context,
@@ -233,13 +356,17 @@ def run(
 ) -> None:
     """Valida tudo antes de abrir sessões, congela a suite e executa sem interação."""
     from lastro.evaluation.models import EXECUTORS
+    from lastro.evaluation.retrieval import PURPOSE, peek_purpose
     from lastro.evaluation.runner import create_suite
     from lastro.evaluation.suites import load_suite
 
-    history, project_dir, project_id, _timezone, _root = _open(ctx)
     if executor is not None and executor not in EXECUTORS:
         output.error(f"invalid_suite: unknown executor {executor}")
         raise typer.Exit(code=USAGE_EXIT_CODE)
+    if peek_purpose(suite, Path.cwd()) == PURPOSE:
+        _run_retrieval(ctx, suite, executor, as_json)
+        return
+    history, project_dir, project_id, _timezone, _root = _open(ctx)
     try:
         loaded = load_suite(suite, cwd=Path.cwd())
         name = executor or loaded.spec.executor

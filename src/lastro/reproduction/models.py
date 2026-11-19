@@ -44,9 +44,11 @@ class ReproductionBrief:
     expected: str
     expected_source: str
     expected_source_ref: str | None
+    # Passagem documental citada pelo achado pai, copiada pelo coordenador; nunca evidência.
+    documentation: tuple[tuple[str, str], ...] = ()
 
     def as_json(self) -> dict[str, object]:
-        return {
+        data: dict[str, object] = {
             "flow": self.flow,
             "entity": self.entity,
             "preconditions": list(self.preconditions),
@@ -57,6 +59,11 @@ class ReproductionBrief:
                 "source_ref": self.expected_source_ref,
             },
         }
+        if self.documentation:
+            data["documentation"] = [
+                {"citation": citation, "text": text} for citation, text in self.documentation
+            ]
+        return data
 
     @property
     def sha256(self) -> str:
@@ -82,6 +89,13 @@ class ReproductionBrief:
             f" ({self.expected_source_ref})" if self.expected_source_ref else ""
         )
         lines += ["", f"Expected result (source: {source}):", self.expected]
+        for citation, text in self.documentation:
+            lines += [
+                "",
+                f"Documentation cited for the expected result {citation} (declared "
+                "expectation, not evidence of behavior):",
+                text,
+            ]
         lines += [
             "",
             "Create any data you need with generate_test_data; records from earlier runs are "

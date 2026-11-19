@@ -126,6 +126,16 @@ def check_finding(conn: sqlite3.Connection, run_id: str, draft: FindingDraft) ->
         raise ReportingError(
             INVALID_REFERENCE, "source_ref must be a criterion id of the active plan."
         )
+    if draft.expected_source == ExpectedSource.DOCUMENTATION:
+        delivered = conn.execute(
+            "SELECT 1 FROM source_run_refs WHERE id = ? AND run_id = ?",
+            (draft.expected_source_ref, run_id),
+        ).fetchone()
+        if delivered is None:
+            raise ReportingError(
+                INVALID_REFERENCE,
+                "source_ref must be a passage reference_id delivered by sources_query in this run.",
+            )
 
 
 def attempt_from_row(row: sqlite3.Row) -> ReproductionAttempt:

@@ -24,6 +24,7 @@ from lastro.executors import get_executor, supported_executors
 from lastro.mission import BundleError, instruction_problems, verify_bundle
 from lastro.native import missing_dependencies as native_missing_dependencies
 from lastro.paths import ensure_writable, is_inside_git_tree
+from lastro.sources.embeddings import ModelStatus
 
 MIN_PYTHON = (3, 12)
 HTTP_TIMEOUT_SECONDS = 10.0
@@ -44,6 +45,7 @@ NAME_VERSION_ENDPOINT = "Version endpoint acessível"
 NAME_PERMISSION = "Permissão do executor"
 NAME_SKILL_BUNDLE = "Bundle de skills"
 NAME_SOURCE = "Contexto de código (--source)"
+NAME_DOCUMENT_SOURCES = "Fontes documentais"
 
 DEPENDS_ON_CONFIG_DETAIL = "depende de configuração válida"
 DEPENDS_ON_CONFIG_FIX = "Corrija a configuração apontada no check Configuração e rode de novo."
@@ -155,6 +157,15 @@ def scanner_problem() -> str | None:
     return None
 
 
+def documentation_sources_status(private_data_root: Path) -> ModelStatus | None:
+    """None quando o extra sources não está instalado: o check não se aplica."""
+    from lastro.sources.embeddings import REQUIRED_MODULES, missing_modules, model_status
+
+    if len(missing_modules()) == len(REQUIRED_MODULES):
+        return None
+    return model_status(private_data_root)
+
+
 def codex_version() -> str:
     """Versão validada do Codex; sem inferência e sem ler as credenciais da CLI."""
     return probe_install().version
@@ -180,6 +191,7 @@ class DoctorEnvironment:
     missing_native_modules: Callable[[], list[str]] = lambda: native_missing_dependencies()
     scanner_problem: Callable[[], str | None] = scanner_problem
     codex_version: Callable[[], str] = codex_version
+    sources_status: Callable[[Path], ModelStatus | None] = documentation_sources_status
 
 
 def check_python(env: DoctorEnvironment) -> CheckResult:
@@ -519,3 +531,25 @@ def check_skill_bundle(project_dir: Path, executor: str) -> CheckResult:
             f"Aponte {instruction_file.as_posix()} para skills/lastro/ em até 60 linhas.",
         )
     return _ok(13, NAME_SKILL_BUNDLE, f"sha256 {bundle.sha256[:12]}")
+
+
+def check_document_sources(env: DoctorEnvironment, private_data_root: Path) -> CheckResult | None:
+    """Extra e modelo local das fontes documentais; nada é baixado aqui."""
+    status = env.sources_status(private_data_root)
+    if status is None:
+        return None
+    if status.ready:
+        return _ok(15, NAME_DOCUMENT_SOURCES, status.detail)
+    if status.reason == "sources_unavailable":
+        return _warn(
+            15,
+            NAME_DOCUMENT_SOURCES,
+            status.detail,
+            "Instale com uv sync --extra sources (ou pip install 'lastro[sources]').",
+        )
+    return _warn(
+        15,
+        NAME_DOCUMENT_SOURCES,
+        status.detail,
+        "Rode lastro sources model prepare para baixar o modelo local de forma explícita.",
+    )
