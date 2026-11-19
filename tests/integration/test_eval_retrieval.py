@@ -138,7 +138,6 @@ def make(
         judge=judge or FakePort(),
         ragas=ragas or FakeRagas(),
         service_factory=service_factory,
-        heartbeat_interval=60,
     )
 
 
