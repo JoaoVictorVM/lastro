@@ -10,6 +10,7 @@ from urllib.parse import urljoin
 if TYPE_CHECKING:
     from lastro.execution.models import ExecutionState, PendingItem, Reconciliation
     from lastro.history.native import NativeUsage
+    from lastro.sources.models import SourceConflict
 
 from lastro.knowledge.models import MemoryOutcome
 from lastro.oracles.models import OracleSignal
@@ -907,6 +908,10 @@ class ReportInputs:
     verdicts: "tuple[ReproductionVerdict, ...]" = ()
     # Link privado da trace; None nas runs sem opt-in de observabilidade.
     trace: TraceLink | None = None
+    # Passagens documentais entregues à run, consultas e disputas que tocam o que ela usou.
+    source_references: tuple[JsonObject, ...] = ()
+    source_conflicts: "tuple[SourceConflict, ...]" = ()
+    source_queries: tuple[JsonObject, ...] = ()
 
 
 APPROVAL_TTL_SECONDS = 900

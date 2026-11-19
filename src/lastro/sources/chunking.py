@@ -49,9 +49,12 @@ def chunk_document(
     for section in document.sections:
         spans = tokenizer.spans(section.text)
         for start, end in spans_windows(len(spans), CHUNK_TOKENS, CHUNK_OVERLAP):
-            char_start = spans[start][0]
-            char_end = spans[end - 1][1]
-            text = section.text[char_start:char_end]
+            # Bordas vão até o token seguinte (ou o fim da seção): pontuação e marcação fora
+            # dos tokens nunca se perdem entre chunks.
+            char_start = 0 if start == 0 else spans[start][0]
+            limit = spans[end][0] if end < len(spans) else len(section.text)
+            text = section.text[char_start:limit].rstrip()
+            char_end = char_start + len(text)
             locator: JsonObject = {
                 "path": relative_path,
                 "heading": section.heading,

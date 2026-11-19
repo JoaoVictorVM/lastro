@@ -36,6 +36,7 @@ from lastro.execution.models import (
 )
 from lastro.history import approvals, execution, knowledge, native, reproduction
 from lastro.history import observability as obs
+from lastro.history import sources as source_ledger
 from lastro.history.artifacts import (
     StoredFile,
     insert_artifact,
@@ -1645,6 +1646,13 @@ class HistoryStore:
                 version_observations=tuple(select_version_observations(conn, run_id)),
                 verdicts=tuple(reproduction.select_verdicts(conn, run_id)),
                 trace=_trace_link(conn, run_id),
+                source_references=tuple(
+                    source_ledger.select_run_references(conn, self.project_id, run_id)
+                ),
+                source_conflicts=tuple(source_ledger.run_conflicts(conn, self.project_id, run_id)),
+                source_queries=tuple(
+                    source_ledger.select_run_queries(conn, self.project_id, run_id)
+                ),
                 **self._execution_inputs(conn, run_id),
             )
 

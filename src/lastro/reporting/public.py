@@ -25,6 +25,8 @@ from lastro.reporting.builder import (
 from lastro.reporting.integrity import verify_artifacts
 from lastro.reporting.models import (
     BlockView,
+    ConflictSideView,
+    ConflictView,
     CreatedRecordView,
     CriterionView,
     FindingView,
@@ -111,6 +113,24 @@ def public_projection(data: ReportData, known: tuple[str, ...]) -> ReportData:
             verdict=replace(item.verdict, notes=(), missing_precondition=None)
             if item.verdict is not None
             else None,
+            # Corpo, nome do arquivo, heading e referência são privados; o hash fica.
+            sources=tuple(
+                replace(source, reference_id="", citation="", heading="", text="")
+                for source in item.sources
+            ),
+        )
+
+    def conflict(item: ConflictView) -> ConflictView:
+        def side(value: ConflictSideView) -> ConflictSideView:
+            return replace(value, label="", quote="")
+
+        return replace(
+            item,
+            id="",
+            flow=clean(item.flow),
+            left=side(item.left),
+            right=side(item.right),
+            explanation="",
         )
 
     def criterion(item: CriterionView) -> CriterionView:
@@ -182,6 +202,7 @@ def public_projection(data: ReportData, known: tuple[str, ...]) -> ReportData:
         created_records_warning=None,
         limitations=tuple(clean(text) for text in data.limitations),
         missing_evidence=(),
+        source_conflicts=tuple(conflict(item) for item in data.source_conflicts),
     )
 
 

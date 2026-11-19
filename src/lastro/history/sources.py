@@ -1202,3 +1202,35 @@ def link_knowledge(
             timestamp,
         ),
     )
+
+
+def select_run_references(
+    conn: sqlite3.Connection, project_id: str, run_id: str
+) -> list[JsonObject]:
+    return [
+        _object(row["snapshot_json"])
+        for row in conn.execute(
+            "SELECT r.snapshot_json FROM source_run_refs r JOIN source_queries q "
+            "ON q.id = r.query_id WHERE r.run_id = ? AND q.project_id = ? "
+            "ORDER BY r.created_at, r.rank, r.id",
+            (run_id, project_id),
+        )
+    ]
+
+
+def select_run_queries(conn: sqlite3.Connection, project_id: str, run_id: str) -> list[JsonObject]:
+    """Metadados das consultas, sem o texto pedido pelo agente."""
+    return [
+        {
+            "query_id": row["id"],
+            "flow": row["flow"],
+            "truncated": bool(row["truncated"]),
+            "omitted_count": int(row["omitted_count"]),
+            "created_at": row["created_at"],
+        }
+        for row in conn.execute(
+            "SELECT id, flow, truncated, omitted_count, created_at FROM source_queries "
+            "WHERE run_id = ? AND project_id = ? ORDER BY created_at, id",
+            (run_id, project_id),
+        )
+    ]

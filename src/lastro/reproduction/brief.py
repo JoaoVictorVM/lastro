@@ -12,10 +12,15 @@ BRIEF_FIELDS = (
     "expected",
     "expected_source",
     "expected_source_ref",
+    "documentation",
 )
 
 
-def build_brief(finding: Finding, entity: str | None = None) -> ReproductionBrief:
+def build_brief(
+    finding: Finding,
+    entity: str | None = None,
+    documentation: tuple[tuple[str, str], ...] = (),
+) -> ReproductionBrief:
     """Somente passos, pré-condições e expected; observado, evidência e limitações ficam fora."""
     return ReproductionBrief(
         flow=finding.flow,
@@ -25,4 +30,5 @@ def build_brief(finding: Finding, entity: str | None = None) -> ReproductionBrie
         expected=finding.expected,
         expected_source=finding.expected_source.value,
         expected_source_ref=finding.expected_source_ref,
+        documentation=documentation,
     )

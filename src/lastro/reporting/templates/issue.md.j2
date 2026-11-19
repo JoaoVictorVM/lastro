@@ -30,6 +30,20 @@
 
 Source: {{ finding.expected_source }}{% if finding.expected_source_ref %} ({{ finding.expected_source_ref | code }}){% endif %}
 
+{% for source in finding.sources %}
+{% if source.legacy %}
+- Documentation reference {{ source.citation | code }} could not be verified.
+{% else %}
+- Cited documentation: {{ source.citation | inline }} (file sha256 {{ source.file_sha256 | code }}, modified {{ (source.modified_at or "unknown") | inline }})
+
+{{ source.text | quote }}
+
+{% endif %}
+{% endfor %}
+{% if finding.sources %}
+Limitation: the expectation comes from declared documentation; the steps below show the observed behavior.
+
+{% endif %}
 
 ## Observed
 

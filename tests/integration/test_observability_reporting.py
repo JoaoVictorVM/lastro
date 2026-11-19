@@ -99,6 +99,8 @@ def test_disabled_and_legacy_report_digests_are_unchanged(
     for key in ("model_usage", "change_context", "execution"):
         if content.get(key) is None:
             content.pop(key, None)
+    assert content.pop("source_conflicts") == ()
+    assert content.pop("documentation_queries") == 0
     for group in ("confirmed", "suspected", "harness_failures"):
         assert not content[group]
     assert data_sha256(outcome.data) == sha256_text(canonical(content))

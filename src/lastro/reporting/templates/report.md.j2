@@ -32,6 +32,25 @@
 
 {{ item.expected | quote }}
 
+{% if item.sources %}
+**Sources used**
+
+{% for source in item.sources %}
+{% if public %}
+- Declared documentation passage{% if source.file_sha256 %} (file sha256 {{ source.file_sha256 | code }}){% endif %}
+
+{% elif source.legacy %}
+- {{ source.citation | code }}: legacy documentation reference, not verified
+{% else %}
+- {{ source.citation | inline }}: declared documentation, file sha256 {{ source.file_sha256 | code }}, modified {{ (source.modified_at or "unknown") | inline }}
+
+{{ source.text | quote }}
+
+{% endif %}
+{% endfor %}
+Documentation states what the system should do; only the observed result below shows what it did.
+
+{% endif %}
 **Observed**
 
 {{ item.observed | quote }}
@@ -244,6 +263,34 @@ None.
 None.
 {% endfor %}
 
+{% if report.source_conflicts or report.documentation_queries %}
+## Source conflicts
+
+{% for item in report.source_conflicts %}
+### {{ item.flow | inline }}: {{ item.assessment }} conflict ({{ item.status }})
+
+- {{ item.left.source_type }} ({{ item.left.kind }}){% if not public %}: {{ item.left.label | inline }}{% endif %}
+
+{% if not public and item.left.quote %}
+{{ item.left.quote | quote }}
+
+{% endif %}
+- {{ item.right.source_type }} ({{ item.right.kind }}){% if not public %}: {{ item.right.label | inline }}{% endif %}
+
+{% if not public and item.right.quote %}
+{{ item.right.quote | quote }}
+
+{% endif %}
+{% if not public %}
+- Explanation: {{ item.explanation | inline }}
+{% endif %}
+- No source was chosen as correct; a human decides.
+
+{% else %}
+None.
+
+{% endfor %}
+{% endif %}
 ## Oracle signals
 
 {% if report.oracle_signals %}

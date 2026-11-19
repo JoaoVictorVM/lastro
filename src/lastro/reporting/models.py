@@ -24,6 +24,7 @@ from lastro.history import (
     SeveritySuggestion,
 )
 from lastro.mission.models import normalize_spaces
+from lastro.sources.models import SOURCE_REF_PATTERN
 
 MISSING_FINDING_FIELDS = "missing_finding_fields"
 INVALID_FINDING = "invalid_finding"
@@ -114,6 +115,13 @@ class FindingInput(_Strict):
             self.expected.source_ref
         ):
             raise ValueError("mission_criterion expectations need source_ref with a criterion id")
+        if self.expected.source == ExpectedSource.DOCUMENTATION and not (
+            self.expected.source_ref and SOURCE_REF_PATTERN.match(self.expected.source_ref)
+        ):
+            raise ValueError(
+                "documentation expectations need source_ref with a passage reference_id "
+                "returned by sources_query in this run"
+            )
         return self
 
     def draft(self, action_id: str | None) -> FindingDraft:
@@ -265,6 +273,41 @@ class FindingView:
     created_at: str
     intermittent: bool = False
     verdict: VerdictView | None = None
+    sources: "tuple[SourceView, ...]" = ()
+
+
+@dataclass(frozen=True)
+class SourceView:
+    """Passagem documental citada pelo achado, como foi entregue à run."""
+
+    reference_id: str
+    citation: str
+    heading: str
+    file_sha256: str
+    modified_at: str | None
+    text: str
+    legacy: bool = False
+
+
+@dataclass(frozen=True)
+class ConflictSideView:
+    kind: str
+    source_type: str
+    label: str
+    quote: str
+
+
+@dataclass(frozen=True)
+class ConflictView:
+    """Disputa entre fontes com as duas versões; nenhuma é apresentada como vencedora."""
+
+    id: str
+    flow: str
+    assessment: str
+    status: str
+    left: ConflictSideView
+    right: ConflictSideView
+    explanation: str
 
 
 @dataclass(frozen=True)
@@ -486,3 +529,5 @@ class ReportData:
     change_context: ChangeContextView | None = None
     execution: ExecutionView | None = None
     trace: TraceView | None = None
+    source_conflicts: tuple[ConflictView, ...] = ()
+    documentation_queries: int = 0
