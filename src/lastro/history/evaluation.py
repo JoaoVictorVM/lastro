@@ -263,6 +263,37 @@ class Lease:
     generation: int
 
 
+@dataclass(frozen=True)
+class RetrievalSampleRecord:
+    """Pergunta e repetição avaliadas: contexto entregue, resposta, referência e métricas."""
+
+    id: str
+    suite_id: str
+    trial_id: str
+    attempt_id: str
+    question_id: str
+    repetition: int
+    input_sha256: str
+    snapshot: dict[str, Any]
+    metrics: dict[str, Any]
+    created_at: str
+
+
+def _sample(row: sqlite3.Row) -> RetrievalSampleRecord:
+    return RetrievalSampleRecord(
+        id=row["id"],
+        suite_id=row["suite_id"],
+        trial_id=row["trial_id"],
+        attempt_id=row["attempt_id"],
+        question_id=row["question_id"],
+        repetition=int(row["repetition"]),
+        input_sha256=row["input_sha256"],
+        snapshot=_load(row["snapshot_json"]) or {},
+        metrics=_load(row["metrics_json"]) or {},
+        created_at=row["created_at"],
+    )
+
+
 def _suite(row: sqlite3.Row) -> SuiteRecord:
     return SuiteRecord(
         id=row["id"],
@@ -1218,6 +1249,60 @@ class EvalRepository:
             ).fetchall()
         )
         return [_budget(row) for row in rows]
+
+    def record_sample(
+        self,
+        lease: Lease,
+        *,
+        trial_id: str,
+        attempt_id: str,
+        question_id: str,
+        repetition: int,
+        input_sha256: str,
+        snapshot: dict[str, Any],
+        metrics: dict[str, Any],
+    ) -> RetrievalSampleRecord:
+        """Amostra gravada sob o lease da suite; repetir a mesma tentativa não duplica."""
+        now = self._now()
+        sample_id = self._id("rsm")
+
+        def write(conn: sqlite3.Connection) -> RetrievalSampleRecord:
+            _check_lease(conn, lease, now)
+            conn.execute(
+                "INSERT OR IGNORE INTO retrieval_samples (id, suite_id, trial_id, attempt_id, "
+                "question_id, repetition, input_sha256, snapshot_json, metrics_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    sample_id,
+                    lease.suite_id,
+                    trial_id,
+                    attempt_id,
+                    question_id,
+                    repetition,
+                    input_sha256,
+                    _json(snapshot),
+                    _json(metrics),
+                    now,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM retrieval_samples WHERE attempt_id = ? AND question_id = ? "
+                "AND repetition = ?",
+                (attempt_id, question_id, repetition),
+            ).fetchone()
+            return _sample(row)
+
+        return self._db.write(write)
+
+    def list_samples(self, suite_id: str) -> list[RetrievalSampleRecord]:
+        rows = self._db.read(
+            lambda conn: conn.execute(
+                "SELECT * FROM retrieval_samples WHERE suite_id = ? ORDER BY question_id, "
+                "repetition, created_at",
+                (suite_id,),
+            ).fetchall()
+        )
+        return [_sample(row) for row in rows]
 
     def committed_nusd(self, suite_id: str) -> int:
         return self._db.read(lambda conn: _committed(conn, suite_id))

@@ -1,0 +1,9 @@
+Desativação de funcionário
+
+O sistema não exclui funcionários. Quando alguém deixa a clínica, o funcionário é desativado.
+
+A desativação muda o status para Inativo e mantém todos os dados cadastrados. Um funcionário
+inativo pode ser reativado na edição, mudando o status de volta para Ativo.
+
+Somente funcionários da própria clínica podem ser desativados. Um funcionário de outra clínica
+não aparece para a pessoa conectada e não pode ser alterado por ela.

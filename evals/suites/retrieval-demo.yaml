@@ -1,0 +1,15 @@
+# Avaliação da recuperação documental sobre a documentação sintética da demo.
+# Cada pergunta é respondida numa sessão headless nova, sem tools, só com os trechos recuperados;
+# o Ragas mede precisão e cobertura do contexto e fidelidade da resposta.
+schema_version: 1
+id: retrieval-demo
+purpose: retrieval
+executor: claude-code
+runs_per_condition: 5
+conditions: [full]
+corpus: evals/retrieval/demo/docs
+questions: evals/retrieval/demo/questions.json
+judge:
+  executor: claude-code
+limits:
+  suite_budget_usd: "10.00"

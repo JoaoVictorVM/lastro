@@ -427,3 +427,77 @@ class HeadlessResult:
     output_error: str | None = None
     reproduction_usage: Usage | None = None
     events: tuple[Mapping[str, Any], ...] = field(default_factory=tuple[Mapping[str, Any], ...])
+
+
+# Avaliação de recuperação documental ---------------------------------------------------------
+
+RETRIEVAL_METRICS = (
+    "retrieval.context_precision",
+    "retrieval.context_recall",
+    "retrieval.faithfulness",
+)
+MIN_RETRIEVAL_QUESTIONS = 30
+MAX_RETRIEVAL_QUESTIONS = 500
+
+
+def _relative_eval_path(value: str) -> str:
+    normalized = value.replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part not in ("", ".")]
+    if (
+        normalized.startswith("/")
+        or (len(normalized) > 1 and normalized[1] == ":")
+        or not parts
+        or any(part == ".." for part in parts)
+        or parts[0] != "evals"
+    ):
+        raise ValueError("caminho relativo à raiz do projeto, sob evals/, sem '..'")
+    return "/".join(parts)
+
+
+EvalPath = Annotated[str, AfterValidator(_relative_eval_path)]
+
+
+class RetrievalSuiteSpec(_Strict):
+    """Suite documental: perguntas sobre um corpus, sem demo, cenários nem catálogo de bugs."""
+
+    schema_version: Literal[1]
+    id: SafeId
+    purpose: Literal["retrieval"]
+    executor: Literal["claude-code", "codex", "native"] = "claude-code"
+    model: str | None = None
+    runs_per_condition: StrictInt = Field(default=DEFAULT_RUNS, ge=1, le=100)
+    seed: StrictInt = Field(default=0, ge=0, le=2_147_483_647)
+    # Core só mede a configuração completa; não existe ablação documental no enum da F14.
+    conditions: tuple[Literal["full"], ...] = ("full",)
+    corpus: EvalPath
+    questions: EvalPath
+    judge: JudgeSpec = JudgeSpec()
+    limits: LimitsSpec = LimitsSpec()
+
+
+class ReferenceLocation(_Strict):
+    path: Annotated[str, Field(min_length=1, max_length=300)]
+    heading: Annotated[str, Field(min_length=1, max_length=300)]
+    quote: Text
+
+
+class RetrievalQuestion(_Strict):
+    id: SafeId
+    question: Text
+    reference: Text
+    reference_locations: tuple[ReferenceLocation, ...] = Field(min_length=1, max_length=10)
+
+
+class RetrievalDataset(_Strict):
+    schema_version: Literal[1]
+    id: SafeId
+    language: str = "pt-BR"
+    reviewed: StrictBool
+    questions: tuple[RetrievalQuestion, ...] = Field(
+        min_length=MIN_RETRIEVAL_QUESTIONS, max_length=MAX_RETRIEVAL_QUESTIONS
+    )
+
+    def model_post_init(self, context: Any) -> None:
+        _unique([item.id for item in self.questions], "pergunta")
+        if not self.reviewed:
+            raise ValueError("o conjunto de perguntas precisa estar revisado")

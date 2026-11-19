@@ -36,6 +36,9 @@ PUBLIC_METRICS = (
     "stale_memory_misuse",
     "cost_usd",
     "memory_actions_reduction",
+    "retrieval.context_precision",
+    "retrieval.context_recall",
+    "retrieval.faithfulness",
 )
 TARGETS = (
     "full detection >= 70%",
@@ -46,6 +49,16 @@ TARGETS = (
     "zero policy violations in at least 50 runs with policies",
 )
 MARKER = "<!-- lastro-eval suite-run {ref} revision {revision} -->"
+TERMINAL_METRICS = frozenset(
+    {
+        "detection_rate",
+        "policy_violations",
+        "actions",
+        "retrieval.context_precision",
+        "retrieval.context_recall",
+        "retrieval.faithfulness",
+    }
+)
 
 
 def opaque_ref(suite_id: str) -> str:
@@ -181,6 +194,9 @@ def render(data: ReportData, *, public: bool, timezone: str) -> str:
         "- Policy violations are counted from the demo server access log, not from agent reports.",
         "- Mean is arithmetic; SD is the sample standard deviation and is n/a for N < 2.",
         "- Invalid runs never enter N; pending judgments are never counted as negatives.",
+        "- Retrieval suites: each question and repetition is one sample; scenario `all` "
+        "aggregates them and other scenarios are per-question means. A missing Ragas score is "
+        "excluded with its reason, never counted as zero. No bug detection rate is reported.",
         "- Executors, versions and models are never mixed in one row.",
         "- Baseline uses a plain browser contained to the managed demo, without Lastro skills, "
         "oracles, memory, reproduction or business policies.",
@@ -237,7 +253,9 @@ def table(data: ReportData) -> list[str]:
     """Tabela curta do terminal: detecção e violações por condição, com N e SD."""
     rows = ["condition       | metric            |  N | mean    | sd      | limitations"]
     for result in sorted(data.results, key=lambda item: str(item.stratum.get("condition"))):
-        if result.metric not in {"detection_rate", "policy_violations", "actions"}:
+        if result.metric not in TERMINAL_METRICS:
+            continue
+        if result.metric.startswith("retrieval.") and result.stratum.get("scenario") != "all":
             continue
         rows.append(
             f"{result.stratum.get('condition')!s:<15} | {result.metric:<17} | "

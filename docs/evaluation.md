@@ -147,3 +147,5 @@ Targets reported as indicators: full detection at least 70%, at least 25 percent
 ## Contracts for other consumers
 
 The headless task port accepts `purpose=retrieval` (metrics in the `retrieval.*` namespace, no browser or demo) and `purpose=autonomous`, which always uses the `unattended` gate policy: every approval request is skipped, never approved.
+
+The retrieval suite `evals/suites/retrieval-demo.yaml` uses this port; see [knowledge sources](knowledge-sources.md#evaluating-retrieval).

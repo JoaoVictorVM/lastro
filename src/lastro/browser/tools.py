@@ -243,9 +243,17 @@ PROJECTION_SCRIPT = r"""
     if (type === 'hidden') continue;
     let label = el.getAttribute('aria-label') || '';
     if (!label && el.labels && el.labels.length) label = el.labels[0].textContent;
-    fields.push({name: (el.getAttribute('name') || '').slice(0, 80), id: (el.id || '').slice(0, 80),
+    const field = {name: (el.getAttribute('name') || '').slice(0, 80),
+      id: (el.id || '').slice(0, 80),
       label: text(label), type: type.slice(0, 20), required: !!el.required, visible: shown(el),
-      enabled: !el.disabled});
+      enabled: !el.disabled};
+    // Rejeição exibida pela página (mensagem do servidor), nunca o valor digitado.
+    if (el.getAttribute('aria-invalid') === 'true') {
+      field.invalid = true;
+      const described = document.getElementById(el.getAttribute('aria-describedby') || '');
+      if (described) field.error = text(described.textContent);
+    }
+    fields.push(field);
   }
   return {title: document.title, landmarks: landmarks.slice(0, 40), fields: fields.slice(0, 100),
     incomplete: landmarks.length > 40 || fields.length > 100};

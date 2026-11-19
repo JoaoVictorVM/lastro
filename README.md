@@ -126,6 +126,10 @@ A run can also start from an issue (`--issue` with a GitHub URL read through you
 
 Each run can reuse what earlier runs observed. The agent proposes typed facts (field properties, screens, flow steps, single experiences and human clarifications) that cite observations of the same run; Lastro validates them, refuses instructions disguised as facts and consolidates them when the run ends, marking divergent values as `contested`. `knowledge_query` returns at most 10 entries and 4,000 characters, each with its source, scope, staleness and whether it must be revalidated, and facts never change policies or approvals. Every run ends with one memory outcome (`updated`, `nothing_new`, `consolidation_pending` or `persistence_failed`). Use `lastro knowledge list`, `show`, `edit`, `discard`, `revalidate` and `consolidate` to review and correct it. See [docs/browser-tools.md](docs/browser-tools.md#persistent-memory) for the contracts.
 
+## Knowledge sources
+
+With the optional `sources` extra, `lastro sources add docs/ --project demo` indexes a local folder of Markdown, text, HTML and PDF documentation (up to 2,000 files or 200 MB per project) with a local embedding model that you download once with `lastro sources model prepare`, and `lastro sources sync` re-indexes changed files and drops deleted ones. During a run the agent calls `sources_query` and receives at most 5 cited passages, such as `[docs/cadastro.md § Campos obrigatórios]`, from a hybrid of SQLite FTS5 and vector search. Documentation is a declared source: it never changes policies or approvals, findings that rely on it must cite a passage delivered in the run, and conflicts with observed behavior, memory, issues or human answers are reported with both versions instead of being resolved. `evals/suites/retrieval-demo.yaml` measures retrieval with Ragas on 34 questions. Knowledge cards inferred from code are not available yet. See [docs/knowledge-sources.md](docs/knowledge-sources.md).
+
 ## Findings and reports
 
 The agent submits findings with `report_finding` (numbered steps, preconditions, the expected result with its source, the observed result and evidence ids from the same run) and records each criterion with `record_criterion_result`; `met` always needs positive evidence. Findings start as `suspected` or `inconclusive`, and agent or tool failures are kept apart from defects of the system under test. When the run ends, Lastro writes `runs/<run id>/report.md` from the history only, plus a bug draft per confirmed finding in `issues/`. `lastro report verify <run id>` recomputes the SHA-256 of every artifact and exits 2 when one changed, and `lastro report export --public <run id>` writes a copy without tenant names, URLs, record ids or screenshots. See [docs/browser-tools.md](docs/browser-tools.md#findings-criteria-and-evidence) for the contracts.
@@ -149,7 +153,7 @@ Each release adds one capability and ends with a measurable result.
 | v0.5 | Codex executor | In progress |
 | v0.6 | Native executor and observability | Planned |
 | v0.7 | Change context from issues and Git | Planned |
-| v0.8 | Knowledge sources | Planned |
+| v0.8 | Knowledge sources | In progress |
 | v0.9 | Independent verification | Planned |
 | v1.0 | Autonomous mode | Planned |
 
