@@ -14,7 +14,7 @@ _TOOL_NAMES = (
     "mission_context|submit_mission_plan|record_test_check|observe|navigate|click|fill|select|"
     "submit|screenshot|wait_for|report_finding|record_criterion_result|start_evidence_video|"
     "stop_evidence_video|ask_clarification|approval_status|end_run|generate_test_data|"
-    "knowledge_query|knowledge_propose|knowledge_revalidate"
+    "knowledge_query|knowledge_propose|knowledge_revalidate|sources_query|sources_report_conflict"
 )
 
 _DIRECTIVES = tuple(

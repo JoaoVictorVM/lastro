@@ -116,6 +116,7 @@ def test_empty_mission_context_call_remains_compatible(history_context: ProjectC
         "skill_bundle_sha256",
         "plan_status",
         "knowledge",
+        "sources",
         "action_id",
     }
     calls = [event for event in history.list_events(run_id) if event.tool_name == "mission_context"]

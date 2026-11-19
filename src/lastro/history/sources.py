@@ -26,17 +26,21 @@ from lastro.sources.models import (
     NO_SOURCES,
     SOURCES_BUSY,
     SOURCES_UNAVAILABLE,
+    Assessment,
     Candidate,
     ChunkDraft,
     FileStatus,
     Passage,
     QueryOutcome,
+    SourceConflict,
     SourceRoot,
     SourcesError,
     SourceStatus,
     citation,
 )
 from lastro.sources.retrieval import fit_passages, fuse, match_expression
+
+DOCUMENTATION = "documentation"
 
 
 def new_id(prefix: str) -> str:
@@ -588,6 +592,16 @@ class SourceRepository:
     def has_active(self) -> bool:
         return self.active() is not None
 
+    def now(self) -> str:
+        return self._now()
+
+    def transaction[T](self, operation: Callable[[sqlite3.Connection], T]) -> T:
+        """Transação de escrita para os fluxos de disputa e proveniência das fontes."""
+        return self._database.write(operation)
+
+    def conflicts(self, run_id: str) -> list[SourceConflict]:
+        return self._database.read(lambda conn: run_conflicts(conn, self.project_id, run_id))
+
     # Consulta -----------------------------------------------------------------------------
 
     def query(
@@ -954,3 +968,237 @@ def _snapshot(
         "generation": generation.ordinal,
         "fingerprint": generation.fingerprint,
     }
+
+
+# Disputas e proveniência documental -------------------------------------------------------
+
+
+def open_disputes(conn: sqlite3.Connection, entry_id: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM source_conflict_entries e JOIN source_conflicts c ON c.id = e.conflict_id "
+        "WHERE e.knowledge_id = ? AND c.status = 'open' LIMIT 1",
+        (entry_id,),
+    ).fetchone()
+    return row is not None
+
+
+def resolve_disputes(conn: sqlite3.Connection, entry_id: str, timestamp: str) -> tuple[str, ...]:
+    """Decisão humana na memória fecha as disputas da entrada e devolve as outras afetadas."""
+    conflicts = [
+        str(row["conflict_id"])
+        for row in conn.execute(
+            "SELECT e.conflict_id FROM source_conflict_entries e JOIN source_conflicts c "
+            "ON c.id = e.conflict_id WHERE e.knowledge_id = ? AND c.status = 'open'",
+            (entry_id,),
+        )
+    ]
+    partners: set[str] = set()
+    for conflict_id in conflicts:
+        conn.execute(
+            "UPDATE source_conflicts SET status = 'resolved', resolved_at = ?, "
+            "resolution_ref = ? WHERE id = ?",
+            (timestamp, f"knowledge_mutation:{entry_id}", conflict_id),
+        )
+        partners.update(
+            str(row["knowledge_id"])
+            for row in conn.execute(
+                "SELECT knowledge_id FROM source_conflict_entries WHERE conflict_id = ? "
+                "AND knowledge_id <> ?",
+                (conflict_id, entry_id),
+            )
+        )
+    return tuple(sorted(partners))
+
+
+def entry_snapshot(conn: sqlite3.Connection, entry_id: str) -> JsonObject:
+    row = conn.execute(
+        "SELECT id, revision, flow, statement, fact_json, value_sha256, source_type, source_ref, "
+        "scope_json FROM knowledge WHERE id = ?",
+        (entry_id,),
+    ).fetchone()
+    refs: list[JsonValue] = [
+        _object(item["snapshot_json"])
+        for item in conn.execute(
+            "SELECT snapshot_json FROM source_knowledge_refs WHERE knowledge_id = ? "
+            "ORDER BY created_at, id",
+            (entry_id,),
+        )
+    ]
+    return {
+        "kind": "knowledge",
+        "reference_id": row["id"],
+        "revision": int(row["revision"]),
+        "flow": row["flow"],
+        "statement": row["statement"],
+        "fact": _object(row["fact_json"]),
+        "value_sha256": row["value_sha256"],
+        "source_type": row["source_type"],
+        "source_ref": row["source_ref"],
+        "scope": _object(row["scope_json"]),
+        "documentation": refs,
+    }
+
+
+def pair_hash(left: JsonObject, right: JsonObject) -> str:
+    """Par canônico independente da ordem: tipo, referência e conteúdo de cada ponta."""
+
+    def identity(side: JsonObject) -> str:
+        # Passagem pelo chunk e conteúdo (não pelo ID da consulta); memória pelo valor, para
+        # que contestar a entrada (nova revisão) não crie outra disputa para o mesmo par.
+        kind = side.get("kind")
+        if kind == "passage":
+            key: list[JsonValue] = [kind, side.get("chunk_id"), side.get("content_sha256")]
+        elif kind == "knowledge":
+            key = [kind, side.get("reference_id"), side.get("value_sha256")]
+        else:
+            key = [kind, side.get("reference_id"), side.get("content_sha256")]
+        return sha256_hex(canonical_json(key))
+
+    ordered: list[JsonValue] = [*sorted([identity(left), identity(right)])]
+    return sha256_hex(canonical_json(ordered))
+
+
+def insert_conflict(
+    conn: sqlite3.Connection,
+    *,
+    project_id: str,
+    run_id: str | None,
+    flow: str,
+    left: JsonObject,
+    right: JsonObject,
+    assessment: str,
+    explanation: str,
+    knowledge_ids: Sequence[str],
+    timestamp: str,
+) -> tuple[str, bool]:
+    """Grava a disputa (ou devolve a já registrada para o mesmo par) com as entradas afetadas."""
+    digest = pair_hash(left, right)
+    existing = conn.execute(
+        "SELECT id FROM source_conflicts WHERE project_id = ? AND flow = ? AND pair_sha256 = ?",
+        (project_id, flow, digest),
+    ).fetchone()
+    if existing is not None:
+        conflict_id = str(existing["id"])
+        created = False
+    else:
+        conflict_id = new_id("sc")
+        conn.execute(
+            "INSERT INTO source_conflicts (id, project_id, run_id, flow, left_snapshot_json, "
+            "right_snapshot_json, pair_sha256, assessment, explanation, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                conflict_id,
+                project_id,
+                run_id,
+                flow,
+                canonical_json(left),
+                canonical_json(right),
+                digest,
+                assessment,
+                redact_text(explanation),
+                timestamp,
+            ),
+        )
+        created = True
+    for knowledge_id in knowledge_ids:
+        conn.execute(
+            "INSERT OR IGNORE INTO source_conflict_entries (conflict_id, knowledge_id) "
+            "VALUES (?, ?)",
+            (conflict_id, knowledge_id),
+        )
+    return conflict_id, created
+
+
+def record_structured_conflict(
+    conn: sqlite3.Connection,
+    project_id: str,
+    run_id: str | None,
+    flow: str,
+    document_entry: str,
+    other_entry: str,
+    timestamp: str,
+) -> str | None:
+    """Valores tipados divergentes com uma ponta documental viram disputa `structured`."""
+    left = entry_snapshot(conn, document_entry)
+    right = entry_snapshot(conn, other_entry)
+    if DOCUMENTATION not in (left["source_type"], right["source_type"]):
+        return None
+    conflict_id, _ = insert_conflict(
+        conn,
+        project_id=project_id,
+        run_id=run_id,
+        flow=flow,
+        left=left,
+        right=right,
+        assessment="structured",
+        explanation="Valores tipados divergentes para o mesmo fato em escopos compatíveis.",
+        knowledge_ids=(document_entry, other_entry),
+        timestamp=timestamp,
+    )
+    return conflict_id
+
+
+def conflict_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> SourceConflict:
+    return SourceConflict(
+        id=row["id"],
+        flow=row["flow"],
+        assessment=Assessment(row["assessment"]),
+        status=row["status"],
+        left=_object(row["left_snapshot_json"]),
+        right=_object(row["right_snapshot_json"]),
+        explanation=row["explanation"],
+        run_id=row["run_id"],
+        created_at=row["created_at"],
+        knowledge_ids=tuple(
+            str(item["knowledge_id"])
+            for item in conn.execute(
+                "SELECT knowledge_id FROM source_conflict_entries WHERE conflict_id = ? "
+                "ORDER BY knowledge_id",
+                (row["id"],),
+            )
+        ),
+    )
+
+
+def run_conflicts(conn: sqlite3.Connection, project_id: str, run_id: str) -> list[SourceConflict]:
+    """Disputas registradas na run e as abertas que tocam o que a run consultou."""
+    rows = conn.execute(
+        "SELECT c.* FROM source_conflicts c WHERE c.project_id = ? AND (c.run_id = ? "
+        "OR (c.status = 'open' AND EXISTS (SELECT 1 FROM source_conflict_entries e "
+        "JOIN knowledge_run_refs r ON r.knowledge_id = e.knowledge_id "
+        "WHERE e.conflict_id = c.id AND r.run_id = ?)) "
+        "OR (c.status = 'open' AND EXISTS (SELECT 1 FROM source_run_refs s "
+        "WHERE s.run_id = ? AND (s.chunk_identity = json_extract(c.left_snapshot_json, "
+        "'$.chunk_id') OR s.chunk_identity = json_extract(c.right_snapshot_json, "
+        "'$.chunk_id'))))) ORDER BY c.created_at, c.id",
+        (project_id, run_id, run_id, run_id),
+    ).fetchall()
+    return [conflict_from_row(conn, row) for row in rows]
+
+
+def link_knowledge(
+    conn: sqlite3.Connection,
+    project_id: str,
+    knowledge_id: str,
+    document_identity: str,
+    chunk_id: str,
+    snapshot: JsonObject,
+    timestamp: str,
+) -> None:
+    body = canonical_json(snapshot)
+    conn.execute(
+        "INSERT INTO source_knowledge_refs (id, project_id, knowledge_id, "
+        "source_document_identity, chunk_identity, source_type, snapshot_json, snapshot_sha256, "
+        "active, created_at) VALUES (?, ?, ?, ?, ?, 'documentation', ?, ?, 1, ?) "
+        "ON CONFLICT (knowledge_id, chunk_identity) DO UPDATE SET active = 1",
+        (
+            new_id("skr"),
+            project_id,
+            knowledge_id,
+            document_identity,
+            chunk_id,
+            body,
+            sha256_hex(body),
+            timestamp,
+        ),
+    )

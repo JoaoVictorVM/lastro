@@ -47,12 +47,15 @@ def project_names(loaded: LoadedConfig) -> tuple[str, ...]:
 
 
 def build_service(loaded: LoadedConfig, store: HistoryStore) -> SourceService:
+    from lastro.sources.conflicts import declared_facts_hook
+
     root = loaded.private_data_root
     return SourceService(
         store.sources,
         project_names=project_names(loaded),
         model_factory=lambda: model_factory(root),
         scanner_factory=scanner_factory,
+        publish_hook=declared_facts_hook(store.project_id),
     )
 
 

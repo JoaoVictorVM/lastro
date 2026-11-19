@@ -28,8 +28,10 @@ PREVIOUS_SHA256: dict[str, frozenset[str]] = {
             "0f7f787c3662b32c18518dbe423cc0cd075131b20995d2759a06fdb116d114fd",
             "22b37e093f95e3d519a772b9fdc03e37793c0aae742899a470985feef3aed589",
             "46cf2f7ac38e41d963fa0861baf4e7ae87d6276f91dc58a53de74c37c95d70aa",
+            "464ef0004dd1b6793a5cf5c1d5dfafb049c08cdff03b0da94eeaa10571fc4d55",
         }
     ),
+    "reproduce.md": frozenset({"af3455319b6e8646c06eb5e5005701160bd8413c8d9fca7f4de81099fd3fe8c5"}),
 }
 
 

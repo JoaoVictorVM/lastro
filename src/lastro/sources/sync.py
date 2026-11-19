@@ -6,6 +6,7 @@ completo, e qualquer falha antes da publicação mantém a geração anterior in
 """
 
 import hashlib
+import sqlite3
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -15,7 +16,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from lastro.history.database import db_timestamp
-from lastro.history.redaction import redact_text
+from lastro.history.errors import HistoryUnavailableError
 from lastro.history.sources import (
     ActiveFile,
     DocumentDraft,
@@ -24,18 +25,21 @@ from lastro.history.sources import (
     Publisher,
     SourceRepository,
 )
-from lastro.knowledge.models import JsonObject, JsonValue
+from lastro.knowledge.models import JsonObject
 from lastro.sources.chunking import chunk_document, chunking_fingerprint
+from lastro.sources.conflicts import validate_declarations
 from lastro.sources.embeddings import EmbeddingModel, require_extra
 from lastro.sources.extraction import PdfRunner, extract, extraction_fingerprint, run_pdf_worker
 from lastro.sources.models import (
     CORPUS_LIMIT_EXCEEDED,
+    FACT_METADATA_INVALID,
     INVALID_SOURCES_INPUT,
     LEASE_RENEW_SECONDS,
     MAX_DECLARATIONS,
     POSSIBLE_SECRET,
     QUERY_MAX_TOKENS,
     SOURCE_UNAVAILABLE,
+    SOURCES_UNAVAILABLE,
     ExtractionFailure,
     FileCounts,
     FileStatus,
@@ -337,15 +341,16 @@ class SourceService:
             for chunk in chunks:
                 vectors.append(embedded[cursor : cursor + len(chunk.windows)])
                 cursor += len(chunk.windows)
-            declarations: list[JsonValue] = [
-                {"heading": item.heading, "body": item.body, "line": item.line}
-                for item in document.declarations[:MAX_DECLARATIONS]
-            ]
+            declarations, invalid = validate_declarations(document.declarations[:MAX_DECLARATIONS])
+            if invalid:
+                plan.reasons[FACT_METADATA_INVALID] += invalid
+                plan.warnings.append(
+                    f"{relative}: {invalid} bloco(s) lastro-fact inválido(s) ignorado(s); "
+                    "o texto continua recuperável."
+                )
             if len(document.declarations) > MAX_DECLARATIONS:
                 plan.warnings.append(
-                    redact_text(
-                        f"{relative}: mais de {MAX_DECLARATIONS} declarações; excedentes ignoradas."
-                    )
+                    f"{relative}: mais de {MAX_DECLARATIONS} declarações; excedentes ignoradas."
                 )
             document_id = self.repository.store_document(
                 lease,
@@ -387,11 +392,17 @@ class SourceService:
                 INVALID_SOURCES_INPUT, f"A consulta excede {QUERY_MAX_TOKENS} tokens."
             )
         vector = model.embed_query(text)
-        return self.repository.query(
-            run_id=run_id,
-            flow=flow,
-            query=text,
-            vector=vector,
-            model=model.fingerprint,
-            limit=limit,
-        )
+        try:
+            return self.repository.query(
+                run_id=run_id,
+                flow=flow,
+                query=text,
+                vector=vector,
+                model=model.fingerprint,
+                limit=limit,
+            )
+        except (sqlite3.Error, HistoryUnavailableError):
+            # Sem registro gravado, nenhuma passagem é entregue.
+            raise SourcesError(
+                SOURCES_UNAVAILABLE, "O histórico não registrou a consulta; nada foi entregue."
+            ) from None

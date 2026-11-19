@@ -1,6 +1,6 @@
 """Apoio dos testes de fontes: PDFs mínimos, scanners dublês e projeto com documentos."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -85,7 +85,7 @@ class BrokenScanner(CleanScanner):
         raise ScannerError("scanner quebrado")
 
 
-def write_docs(root: Path, files: dict[str, str | bytes]) -> Path:
+def write_docs(root: Path, files: Mapping[str, str | bytes]) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     for relative, content in files.items():
         target = root / relative
@@ -126,8 +126,10 @@ def make_service(
     **options: Any,
 ) -> "SourceService":
     """Serviço com dublês: hashing no lugar do E5 e scanner configurável."""
+    from lastro.sources.conflicts import declared_facts_hook
     from lastro.sources.sync import SourceService
 
+    options.setdefault("publish_hook", declared_facts_hook(store.project_id))
     chosen = model or HashingModel()
     detector = scanner or CleanScanner()
     return SourceService(

@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter, ValidationError
 
+from lastro.history import sources as ledger
 from lastro.history.errors import KnowledgeError, RunNotFoundError
 from lastro.history.events import insert_event, prepare_event
 from lastro.history.models import EventType, JsonObject, JsonValue, RunStatus
@@ -171,6 +172,10 @@ def _open_conflicts(conn: sqlite3.Connection, entry_id: str) -> tuple[str, ...]:
     ).fetchall()
     others = {row["right_id"] if row["left_id"] == entry_id else row["left_id"] for row in rows}
     return tuple(sorted(others))
+
+
+def open_conflict_ids(conn: sqlite3.Connection, entry_id: str) -> tuple[str, ...]:
+    return _open_conflicts(conn, entry_id)
 
 
 def entry_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> KnowledgeEntry:
@@ -568,7 +573,9 @@ def query(
             continue
         entries[entry.id] = entry
         required = not _verified_in_run(conn, run_id, entry)
-        views.append(entry_view(entry, now, run["executed_system_version"], required))
+        view = entry_view(entry, now, run["executed_system_version"], required)
+        view["sources"] = entry_sources(conn, entry.id)
+        views.append(view)
     budget = fit_entries(views, request.limit)
     for view in budget.included:
         entry_id = str(view["id"])
@@ -693,7 +700,7 @@ def _restore_state(conn: sqlite3.Connection, entry_id: str, timestamp: str) -> N
     row = conn.execute(
         "SELECT validation_state, source_type FROM knowledge WHERE id = ?", (entry_id,)
     ).fetchone()
-    if _open_conflicts(conn, entry_id):
+    if _open_conflicts(conn, entry_id) or ledger.open_disputes(conn, entry_id):
         return
     target = base_state(SourceType(row["source_type"])).value
     if row["validation_state"] != target:
@@ -701,6 +708,42 @@ def _restore_state(conn: sqlite3.Connection, entry_id: str, timestamp: str) -> N
             "UPDATE knowledge SET validation_state = ?, updated_at = ? WHERE id = ?",
             (target, timestamp, entry_id),
         )
+
+
+def scope_conflicts(
+    conn: sqlite3.Connection,
+    project_id: str,
+    flow: str,
+    fact_key: str,
+    value_sha256: str,
+    scope: Scope,
+    *,
+    covering: bool,
+) -> tuple[str, ...]:
+    """Valores divergentes do mesmo fato em escopos compatíveis, fora do escopo exato.
+
+    `covering=True`: entradas cujo escopo o de `scope` cobre (documentação de projeto contra
+    observações de um tenant). `False`: entradas de documentação cujo escopo cobre `scope`
+    (uma observação nova contra a documentação já indexada). Outros tenants e fluxos nunca
+    entram, e a memória comum continua comparando só o mesmo escopo.
+    """
+    own = scope_key(scope)
+    rows = conn.execute(
+        "SELECT id, scope_json, value_sha256, source_type FROM knowledge WHERE project_id = ? "
+        "AND flow = ? AND fact_key = ? AND legacy = 0 AND discarded_at IS NULL "
+        "AND scope_key <> ? AND value_sha256 <> ? ORDER BY id",
+        (project_id, flow, fact_key, own, value_sha256),
+    ).fetchall()
+    found: list[str] = []
+    for row in rows:
+        other = scope_from_json(_object(row["scope_json"]))
+        if (covering and scope.covers(other)) or (
+            not covering
+            and row["source_type"] == SourceType.DOCUMENTATION.value
+            and other.covers(scope)
+        ):
+            found.append(str(row["id"]))
+    return tuple(found)
 
 
 def _actives(
@@ -824,6 +867,9 @@ def _apply_proposal(
             )
     else:
         version = payload.get("system_version")
+        documented = scope_conflicts(
+            conn, project_id, flow, ident.key, ident.value_sha256, scope, covering=False
+        )
         entry_id = create_entry(
             conn,
             project_id=project_id,
@@ -839,10 +885,14 @@ def _apply_proposal(
             last_verified_at=str(row["created_at"]),
             actor=Actor.AGENT,
             timestamp=timestamp,
-            conflicts_with=decision.conflicts_with,
+            conflicts_with=(*decision.conflicts_with, *documented),
             history_payload={"proposal_id": row["id"]},
         )
         _payload_evidence(conn, entry_id, run_id, payload, timestamp)
+        for document_entry in documented:
+            ledger.record_structured_conflict(
+                conn, project_id, run_id, flow, document_entry, entry_id, timestamp
+            )
     conn.execute(
         "UPDATE knowledge_pending SET status = 'applied', entry_id = ?, processed_at = ? "
         "WHERE id = ?",
@@ -866,11 +916,13 @@ def adapter_fact(
     fact: Fact,
     scope: Scope,
     timestamp: str,
+    covering: bool = False,
 ) -> str:
     """Entrada de adaptador confiável (documentação, código, issue), nunca do agente.
 
     Código é sempre implementação inferida, não regra de negócio confirmada. Divergência com
-    entradas existentes contesta todas, como qualquer outra fonte.
+    entradas existentes contesta todas, como qualquer outra fonte. Com `covering`, o escopo
+    amplo do adaptador também é comparado às entradas mais específicas que ele cobre.
     """
     if source not in ADAPTER_SOURCES:
         raise KnowledgeError(INVALID_REFERENCE, f"{source.value} is not an adapter source.")
@@ -881,6 +933,11 @@ def adapter_fact(
     )
     if decision.kind == "review":
         raise KnowledgeError(INVALID_KNOWLEDGE, decision.reason or "review required")
+    covered = (
+        scope_conflicts(conn, project_id, flow, ident.key, ident.value_sha256, scope, covering=True)
+        if covering
+        else ()
+    )
     if decision.kind == "deduplicate":
         assert decision.entry_id is not None
         current = conn.execute(
@@ -895,6 +952,8 @@ def adapter_fact(
             {"adapter": adapter, "source": source.value, "source_ref": source_ref},
             timestamp,
         )
+        if covered:
+            _contest(conn, decision.entry_id, covered, Actor.ADAPTER, timestamp, None)
         return decision.entry_id
     extensions: JsonObject = {"adapter": adapter}
     if source == SourceType.CODE:
@@ -914,10 +973,109 @@ def adapter_fact(
         last_verified_at=None,
         actor=Actor.ADAPTER,
         timestamp=timestamp,
-        conflicts_with=decision.conflicts_with,
+        conflicts_with=(*decision.conflicts_with, *covered),
         history_payload={"adapter": adapter},
         extensions=extensions,
     )
+
+
+def contest_external(
+    conn: sqlite3.Connection,
+    entry_id: str,
+    conflict_id: str,
+    actor: Actor,
+    timestamp: str,
+    run_id: str | None,
+) -> bool:
+    """Disputa documental registrada fora de knowledge_conflicts marca a entrada contested."""
+    row = conn.execute(
+        "SELECT validation_state FROM knowledge WHERE id = ?", (entry_id,)
+    ).fetchone()
+    if row is None or row["validation_state"] == ValidationState.CONTESTED.value:
+        return False
+    revision = _bump(conn, entry_id, timestamp, validation_state=ValidationState.CONTESTED.value)
+    _history(
+        conn,
+        entry_id,
+        HistoryOperation.CONTESTED,
+        actor,
+        revision,
+        {"source_conflict_id": conflict_id},
+        timestamp,
+        run_id=run_id,
+    )
+    return True
+
+
+def withdraw_documentation(
+    conn: sqlite3.Connection, entry_id: str, timestamp: str, reason: str
+) -> None:
+    """Fonte documental retirada: sai do uso automático sem resolver conflitos.
+
+    Só a entrada sem outra evidência é descartada; disputas e conflitos continuam abertos até
+    uma decisão humana, porque retirar um documento não prova qual valor é o verdadeiro.
+    """
+    row = conn.execute(
+        "SELECT source_type, discarded_at FROM knowledge WHERE id = ?", (entry_id,)
+    ).fetchone()
+    if row is None or row["discarded_at"] is not None:
+        return
+    evidence = conn.execute(
+        "SELECT 1 FROM knowledge_evidence WHERE knowledge_id = ? LIMIT 1", (entry_id,)
+    ).fetchone()
+    if row["source_type"] != SourceType.DOCUMENTATION.value or evidence is not None:
+        return
+    revision = _bump(conn, entry_id, timestamp, discarded_at=timestamp)
+    _set_fts(conn, entry_id, None, "")
+    _history(
+        conn,
+        entry_id,
+        HistoryOperation.DISCARDED,
+        Actor.ADAPTER,
+        revision,
+        {"reason": reason},
+        timestamp,
+    )
+
+
+def entry_sources(conn: sqlite3.Connection, entry_id: str) -> list[JsonValue]:
+    """Todas as origens de um mesmo valor, não só a primeira que criou a entrada."""
+    row = conn.execute(
+        "SELECT source_type, source_ref FROM knowledge WHERE id = ?", (entry_id,)
+    ).fetchone()
+    found: list[JsonValue] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(kind: str, ref: str, extra: JsonObject | None = None) -> None:
+        if (kind, ref) in seen:
+            return
+        seen.add((kind, ref))
+        found.append({"type": kind, "ref": ref, **(extra or {})})
+
+    # Vínculos documentais primeiro: carregam a citação que a origem simples não tem.
+    for item in conn.execute(
+        "SELECT snapshot_json, active FROM source_knowledge_refs WHERE knowledge_id = ? "
+        "ORDER BY created_at, id",
+        (entry_id,),
+    ):
+        snapshot = _object(item["snapshot_json"])
+        add(
+            SourceType.DOCUMENTATION.value,
+            str(snapshot.get("chunk_id", "")),
+            {"citation": snapshot.get("citation"), "active": bool(item["active"])},
+        )
+    if row is not None:
+        add(str(row["source_type"]), str(row["source_ref"]))
+    for item in conn.execute(
+        "SELECT payload_json FROM knowledge_history WHERE knowledge_id = ? "
+        "AND operation = 'evidence_added' ORDER BY id",
+        (entry_id,),
+    ):
+        payload = _object(item["payload_json"])
+        source, ref = payload.get("source"), payload.get("source_ref")
+        if isinstance(source, str) and isinstance(ref, str):
+            add(source, ref)
+    return found
 
 
 def entry_extensions(conn: sqlite3.Connection, entry_id: str) -> JsonObject:
@@ -1406,6 +1564,8 @@ def _discard(
         "WHERE resolved_at IS NULL AND (left_id = ? OR right_id = ?)",
         (timestamp, redact_text(reason), entry_id, entry_id),
     )
+    if actor == Actor.USER:
+        partners = (*partners, *ledger.resolve_disputes(conn, entry_id, timestamp))
     revision = _bump(conn, entry_id, timestamp, discarded_at=timestamp)
     _set_fts(conn, entry_id, None, "")
     _history(
