@@ -39,6 +39,17 @@ obs = [
 eval = [
     "pyyaml>=6.0.3",
 ]
+sources = [
+    "beautifulsoup4>=4.12",
+    "fastembed>=0.7",
+    "markdown-it-py>=3",
+    "pypdf>=5",
+    "sqlite-vec>=0.1.6",
+]
+retrieval-eval = [
+    "lastro[eval,sources]",
+    "ragas>=0.4,<0.5",
+]
 
 [build-system]
 requires = ["hatchling"]

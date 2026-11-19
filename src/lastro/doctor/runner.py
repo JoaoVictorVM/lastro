@@ -90,4 +90,7 @@ def run_doctor(
     results.append(checks.check_skill_bundle(project_dir, executor))
     if loaded is not None and loaded.config.source.enabled:
         results.append(checks.check_source(env, loaded.config.source))
+    documents = checks.check_document_sources(env, root)
+    if documents is not None:
+        results.append(documents)
     return results
