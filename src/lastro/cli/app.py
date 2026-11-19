@@ -21,6 +21,7 @@ from lastro.cli import (
     obs_cmd,
     report_cmd,
     run_cmd,
+    sources_cmd,
     stubs,
     tail_cmd,
 )
@@ -84,6 +85,7 @@ app.command(name="approve")(approve_cmd.approve)
 app.add_typer(knowledge_cmd.knowledge_app, name="knowledge")
 app.add_typer(obs_cmd.obs_app, name="obs")
 app.add_typer(eval_cmd.eval_app, name="eval")
+app.add_typer(sources_cmd.sources_app, name="sources")
 stubs.register(app)
 
 

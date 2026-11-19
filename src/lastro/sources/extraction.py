@@ -280,11 +280,16 @@ def pages_to_document(pages: list[str]) -> Extracted:
 type PdfRunner = Callable[[bytes], list[str]]
 
 
+def worker_command() -> list[str]:
+    """Interpretador isolado (-I): sem PYTHONPATH, site do usuário nem diretório atual."""
+    return [sys.executable, "-I", "-m", PDF_WORKER]
+
+
 def run_pdf_worker(data: bytes) -> list[str]:
     """Executa o extrator isolado; o arquivo original nunca é tocado pelo filho."""
     env = {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
     env["PYTHONIOENCODING"] = "utf-8"
-    command = [sys.executable, "-I", "-m", PDF_WORKER]
+    command = worker_command()
     limiter = _MemoryLimiter()
     try:
         process = subprocess.Popen(

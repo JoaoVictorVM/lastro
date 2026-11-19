@@ -2,9 +2,14 @@
 
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from lastro.change_context.scanner import ScannerError
 from lastro.sources.embeddings import HashingModel
+
+if TYPE_CHECKING:
+    from lastro.history import HistoryStore
+    from lastro.sources.sync import SourceService
 
 
 def _escape(text: str) -> str:
@@ -111,6 +116,27 @@ Esta página descreve o cadastro de funcionários da demo.
 
 Somente administradores podem excluir funcionários.
 """
+
+
+def make_service(
+    store: "HistoryStore",
+    *,
+    model: HashingModel | None = None,
+    scanner: CleanScanner | None = None,
+    **options: Any,
+) -> "SourceService":
+    """Serviço com dublês: hashing no lugar do E5 e scanner configurável."""
+    from lastro.sources.sync import SourceService
+
+    chosen = model or HashingModel()
+    detector = scanner or CleanScanner()
+    return SourceService(
+        store.sources,
+        project_names=("work", store.project_id),
+        model_factory=lambda: chosen,
+        scanner_factory=lambda: detector,
+        **options,
+    )
 
 
 __all__ = [
