@@ -574,6 +574,47 @@ def answer_clarification(
     return _clarification_from_row(updated)
 
 
+SYSTEM_UNAVAILABLE_SOURCE = "system_unavailable"
+UNAVAILABLE_ANSWER_TEXT = (
+    "No answer is available: this run is unattended. Do not assume the requirement; keep the "
+    "gap and record the affected criterion as blocked or inconclusive."
+)
+
+
+def answer_unavailable(
+    conn: sqlite3.Connection, clarification_id: str, timestamp: str
+) -> Clarification:
+    """Resposta de sistema da run unattended: declara a falta de informação e mantém a lacuna.
+
+    A origem `system_unavailable` impede que a memória a trate como fato fornecido pelo usuário.
+    """
+    row = conn.execute("SELECT * FROM clarifications WHERE id = ?", (clarification_id,)).fetchone()
+    if row is None:
+        raise MissionPlanError(INVALID_REFERENCE, "unknown clarification_id")
+    if row["status"] != ClarificationStatus.PENDING.value:
+        raise MissionPlanError(INVALID_REFERENCE, "clarification is not pending")
+    stored: JsonObject = {
+        "answer": UNAVAILABLE_ANSWER_TEXT,
+        "scope": "run",
+        "source": SYSTEM_UNAVAILABLE_SOURCE,
+    }
+    conn.execute(
+        "UPDATE clarifications SET status = 'answered', answer_json = ?, answered_at = ? "
+        "WHERE id = ?",
+        (json.dumps(stored, ensure_ascii=False), timestamp, clarification_id),
+    )
+    event = prepare_event(
+        EventType.CLARIFICATION_ANSWERED,
+        payload={"clarification_id": clarification_id, "gap_id": row["gap_id"], **stored},
+    )
+    insert_event(conn, row["run_id"], event, timestamp)
+    apply_transition(conn, row["run_id"], RunStatus.RUNNING, None, timestamp)
+    updated = conn.execute(
+        "SELECT * FROM clarifications WHERE id = ?", (clarification_id,)
+    ).fetchone()
+    return _clarification_from_row(updated)
+
+
 def resolve_actions(
     conn: sqlite3.Connection, run_id: str, action_ids: list[str]
 ) -> tuple[ActionReference, ...]:

@@ -10,6 +10,7 @@ from lastro import get_version
 from lastro.cli import (
     approve_cmd,
     auth_cmd,
+    autonomous_cmd,
     backup_cmd,
     data_cmd,
     demo_cmd,
@@ -21,6 +22,7 @@ from lastro.cli import (
     obs_cmd,
     report_cmd,
     run_cmd,
+    schedule_cmd,
     sources_cmd,
     stubs,
     tail_cmd,
@@ -86,6 +88,8 @@ app.add_typer(knowledge_cmd.knowledge_app, name="knowledge")
 app.add_typer(obs_cmd.obs_app, name="obs")
 app.add_typer(eval_cmd.eval_app, name="eval")
 app.add_typer(sources_cmd.sources_app, name="sources")
+app.add_typer(schedule_cmd.schedule_app, name="schedule")
+app.add_typer(autonomous_cmd.autonomous_app, name="autonomous")
 stubs.register(app)
 
 

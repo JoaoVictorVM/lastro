@@ -660,6 +660,43 @@ def _withdrawn_approvals(conn: sqlite3.Connection, run_id: str) -> list[PendingI
     ]
 
 
+def _unattended_items(conn: sqlite3.Connection, run_id: str) -> list[PendingItem]:
+    """Ações ignoradas pela política unattended e lacunas sem resposta humana."""
+    approvals = conn.execute(
+        "SELECT action_id, json_extract(payload_json, '$.summary') AS summary FROM approvals "
+        "WHERE run_id = ? AND decided_by = 'scripted' AND decision = 'skip' "
+        "AND decision_reason LIKE '%unattended policy%' ORDER BY requested_at, id",
+        (run_id,),
+    ).fetchall()
+    items = [
+        PendingItem(
+            kind="approval",
+            reference=str(row["action_id"]),
+            state="skipped_unattended",
+            requires_manual_review=True,
+            detail=str(row["summary"] or "Action skipped: unattended runs never approve."),
+        )
+        for row in approvals
+    ]
+    gaps = conn.execute(
+        "SELECT gap_id, question FROM clarifications WHERE run_id = ? AND status = 'answered' "
+        "AND json_extract(answer_json, '$.source') = 'system_unavailable' "
+        "ORDER BY requested_at, id",
+        (run_id,),
+    ).fetchall()
+    items += [
+        PendingItem(
+            kind="clarification_gap",
+            reference=str(row["gap_id"]),
+            state="unanswered",
+            requires_manual_review=True,
+            detail=str(row["question"]),
+        )
+        for row in gaps
+    ]
+    return items
+
+
 def _write_item(intent: WriteIntent, run_id: str | None) -> PendingItem:
     record = intent.record_id or "unknown"
     if intent.operation == "create" and intent.record_id is None:
@@ -749,6 +786,7 @@ def pending_items(conn: sqlite3.Connection, project_id: str, run_id: str) -> lis
                 )
             )
     items += _withdrawn_approvals(conn, run_id)
+    items += _unattended_items(conn, run_id)
     items += [
         PendingItem(
             kind="created_record",

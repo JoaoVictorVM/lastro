@@ -74,6 +74,10 @@ def test_event_and_value_enums_are_stable() -> None:
         "reproduction_started",
         "reproduction_attempt_finished",
         "reproduction_verdict",
+        "autonomous_triggered",
+        "autonomous_dequeued",
+        "autonomous_compared",
+        "autonomous_notification",
     ]
     assert {decision.value for decision in PolicyDecision} == {
         "allow",

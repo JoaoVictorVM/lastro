@@ -214,6 +214,62 @@ class TrialDecisions:
 
 
 @dataclass
+class UnattendedClarifier:
+    """Sem resposta roteirizada: declara a informação indisponível e mantém a lacuna."""
+
+    history: HistoryStore
+    answered: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
+
+    def answer(self, run_ids: Iterable[str]) -> int:
+        from lastro.history.models import ClarificationStatus
+
+        count = 0
+        for run_id in run_ids:
+            try:
+                pending = [
+                    item
+                    for item in self.history.list_clarifications(run_id)
+                    if item.status == ClarificationStatus.PENDING
+                ]
+            except HistoryError:
+                continue
+            for item in pending:
+                try:
+                    self.history.answer_clarification_unavailable(item.id)
+                except HistoryError:
+                    continue
+                self.answered.append((run_id, item.gap_id))
+                count += 1
+        return count
+
+
+@dataclass
+class UnattendedDecisions:
+    """Política unattended fora de qualquer suite: todo pedido vira skip, toda dúvida vira lacuna.
+
+    Decide pelas mesmas interfaces externas (`decide_approval` com ator `scripted`), para as runs
+    não terminais do histórico, incluindo filhas de reprodução da run autônoma.
+    """
+
+    history: HistoryStore
+    approver: ScriptedApprover = field(init=False)
+    clarifier: UnattendedClarifier = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.approver = ScriptedApprover(self.history, ApproverSpec(), GateMode.UNATTENDED)
+        self.clarifier = UnattendedClarifier(self.history)
+
+    def tick(self) -> None:
+        ids = [record.id for record in self.history.list_non_terminal()]
+        self.approver.decide(ids)
+        self.clarifier.answer(ids)
+
+    @property
+    def skipped(self) -> int:
+        return sum(1 for item in self.approver.decisions if item.choice == ApprovalChoice.SKIP)
+
+
+@dataclass
 class DecisionLoop:
     """Poll de 250 ms com relógio injetável; termina quando a tentativa encerra."""
 

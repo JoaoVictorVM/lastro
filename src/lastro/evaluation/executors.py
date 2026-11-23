@@ -765,3 +765,224 @@ def task_for(
         gate_mode=GateMode.SCRIPTED,
         evaluation=evaluation,
     )
+
+
+# Launch headless genérico ---------------------------------------------------------------------
+#
+# Uma run normal do histórico do projeto, sem trial, suite nem condição. O modo autônomo usa esta
+# porta; os adapters de trial acima continuam atendendo a avaliação.
+
+AUTONOMOUS_SUPERVISOR = "autonomous_supervisor"
+
+
+@dataclass(frozen=True)
+class PreparedRun:
+    """Preflight do executor feito antes de criar a run; nada aqui gera custo."""
+
+    executor: str
+    version: str
+    skill_bundle_version: str
+    executor_snapshot: dict[str, Any] | None = None
+    native: Any = None
+
+
+@dataclass(frozen=True)
+class RunLaunch:
+    task: HeadlessTask
+    prepared: PreparedRun
+    project: Any
+    history: Any
+    run_id: str
+    max_minutes: int
+    log_dir: Path
+    write: Writer = lambda line: None
+
+
+def _project_bundle(project: Any, executor: str) -> str:
+    from lastro.mission import BundleError, instruction_problems, verify_bundle
+    from lastro.scaffold.files import executor_spec
+
+    project_dir = project.loaded.project_dir
+    try:
+        bundle = verify_bundle(project_dir)
+    except BundleError as exc:
+        raise EvalError("executor_unavailable", str(exc)) from None
+    external = executor_spec(executor).external
+    if external is not None:
+        problems = instruction_problems(project_dir / external.instruction_file, check_length=False)
+        if problems:
+            raise EvalError("executor_unavailable", "; ".join(problems))
+    return bundle.sha256
+
+
+def prepare_headless(task: HeadlessTask, project: Any) -> PreparedRun:
+    """Instalação, credencial do executor e bundle conferidos antes de qualquer run."""
+    bundle = _project_bundle(project, task.executor)
+    if task.executor == "claude-code":
+        binary = shutil.which("claude")
+        if binary is None:
+            raise EvalError("executor_unavailable", "claude not found in PATH")
+        return PreparedRun(task.executor, _version([binary, "--version"]), bundle)
+    if task.executor == "codex":
+        from lastro.codex.launcher import executor_snapshot, prepare_codex
+        from lastro.codex.preflight import CodexPreflightError
+
+        try:
+            prepared = prepare_codex(project)
+        except CodexPreflightError as exc:
+            raise EvalError("executor_unavailable", str(exc)) from None
+        return PreparedRun(
+            task.executor, prepared.install.version, bundle, executor_snapshot(prepared)
+        )
+    from lastro import get_version
+    from lastro.native.runner import PreflightError
+    from lastro.native.runner import preflight as native_preflight
+
+    try:
+        native = asyncio.run(native_preflight(project))
+    except PreflightError as exc:
+        raise EvalError("executor_unavailable", str(exc)) from None
+    return PreparedRun(task.executor, get_version(), bundle, None, native)
+
+
+def _cancel_run(cancel: threading.Event, history: Any, run_id: str) -> None:
+    cancel.wait()
+    with contextlib.suppress(Exception):
+        history.request_cancellation(run_id, origin="autonomous")
+
+
+def _ensure_terminal(history: Any, run_id: str) -> None:
+    from lastro.history import HistoryError, RunStatus
+
+    with contextlib.suppress(HistoryError):
+        if not history.get_run(run_id).status.is_terminal:
+            history.finish_run(run_id, RunStatus.INTERRUPTED, AUTONOMOUS_SUPERVISOR)
+
+
+def launch_run(launch: RunLaunch, cancel: threading.Event) -> HeadlessResult:
+    """Executa a run já criada com stdin fechado e prazo externo; a run termina sempre."""
+    task = launch.task
+    identity = ExecutorIdentity(task.executor, launch.prepared.version, task.model)
+    watcher = threading.Thread(
+        target=_cancel_run,
+        args=(cancel, launch.history, launch.run_id),
+        daemon=True,
+        name="autonomous-cancel",
+    )
+    watcher.start()
+    try:
+        if task.executor == "claude-code":
+            return _launch_claude(launch, cancel, identity)
+        if task.executor == "codex":
+            return _launch_codex(launch, cancel, identity)
+        return _launch_native(launch, cancel, identity)
+    finally:
+        _ensure_terminal(launch.history, launch.run_id)
+
+
+def _launch_claude(
+    launch: RunLaunch, cancel: threading.Event, identity: ExecutorIdentity
+) -> HeadlessResult:
+    binary = shutil.which("claude")
+    if binary is None:
+        raise EvalError("executor_unavailable", "claude not found in PATH")
+    arguments = [
+        binary,
+        "-p",
+        CLAUDE_FULL_PROMPT.format(run_id=launch.run_id),
+        "--output-format",
+        "json",
+        "--mcp-config",
+        ".mcp.json",
+        "--strict-mcp-config",
+    ]
+    if launch.task.model:
+        arguments += ["--model", launch.task.model]
+    env = dict(os.environ)
+    env.pop("ANTHROPIC_API_KEY", None)
+    launch.log_dir.mkdir(parents=True, exist_ok=True)
+    log = launch.log_dir / "executor.log"
+    try:
+        returncode, stopped = run_supervised(
+            arguments,
+            cwd=launch.project.loaded.project_dir,
+            env=env,
+            log=log,
+            timeout=launch.max_minutes * 60 + GRACE_SECONDS,
+            cancel=cancel,
+        )
+    except OSError as exc:
+        raise EvalError("executor_unavailable", f"claude failed to start: {exc}") from None
+    text = log.read_text(encoding="utf-8", errors="replace")
+    status, usage, model, _ = parse_claude_output(text)
+    if stopped:
+        status = StopReason.INTERRUPTED
+    elif returncode not in (0, None) and status == StopReason.COMPLETED:
+        status = StopReason.CRASH
+    return HeadlessResult(
+        status=status,
+        executor=ExecutorIdentity(identity.name, identity.version, identity.model_requested, model),
+        run_ref=launch.run_id,
+        usage=usage,
+        logs=(str(log),),
+    )
+
+
+def _launch_codex(
+    launch: RunLaunch, cancel: threading.Event, identity: ExecutorIdentity
+) -> HeadlessResult:
+    from lastro.codex.launcher import LaunchRefused
+    from lastro.codex.launcher import launch as codex_launch
+    from lastro.codex.models import LaunchMode
+    from lastro.codex.preflight import CodexPreflightError
+
+    try:
+        codex_launch(
+            launch.project, launch.history, launch.run_id, LaunchMode.HEADLESS, write=launch.write
+        )
+    except (LaunchRefused, CodexPreflightError) as exc:
+        raise EvalError("executor_unavailable", str(exc)) from None
+    record = launch.history.get_run(launch.run_id)
+    status = StopReason.COMPLETED
+    if cancel.is_set():
+        status = StopReason.INTERRUPTED
+    elif record.status_reason in {"usage_limit", "rate_limited"}:
+        status = StopReason.USAGE_CAP
+    # O Codex não reporta custo por run: fica desconhecido, nunca zero.
+    return HeadlessResult(status=status, executor=identity, run_ref=launch.run_id)
+
+
+def _launch_native(
+    launch: RunLaunch, cancel: threading.Event, identity: ExecutorIdentity
+) -> HeadlessResult:
+    from lastro.native.runner import NativeRunner
+    from lastro.observability import drain_run
+
+    prepared, provider = launch.prepared.native
+    runner = NativeRunner(
+        launch.project,
+        launch.history,
+        launch.run_id,
+        prepared,
+        provider,
+        write=launch.write,
+        interactive=False,
+    )
+    outcome = asyncio.run(runner.run())
+    drain_run(launch.project, launch.history, launch.run_id)
+    status = StopReason.COMPLETED
+    if cancel.is_set():
+        status = StopReason.INTERRUPTED
+    elif outcome.reason in {"cost_cap", "suite_cost_cap"}:
+        status = StopReason.COST_CAP
+    elif outcome.reason in {"rate_limited", "usage_limit"}:
+        status = StopReason.RATE_LIMIT
+    usage = Usage()
+    if outcome.usage is not None:
+        usage = Usage(
+            input_tokens=outcome.usage.input_tokens,
+            output_tokens=outcome.usage.output_tokens,
+            cost_nusd=usd_to_nusd(outcome.usage.committed_usd),
+            cost_source="native-ledger",
+        )
+    return HeadlessResult(status=status, executor=identity, run_ref=launch.run_id, usage=usage)

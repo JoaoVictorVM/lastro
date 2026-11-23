@@ -96,6 +96,10 @@ class EventType(StrEnum):
     REPRODUCTION_STARTED = "reproduction_started"
     REPRODUCTION_ATTEMPT_FINISHED = "reproduction_attempt_finished"
     REPRODUCTION_VERDICT = "reproduction_verdict"
+    AUTONOMOUS_TRIGGERED = "autonomous_triggered"
+    AUTONOMOUS_DEQUEUED = "autonomous_dequeued"
+    AUTONOMOUS_COMPARED = "autonomous_compared"
+    AUTONOMOUS_NOTIFICATION = "autonomous_notification"
 
 
 # Somente o registro abre e fecha a run; consumidores não anexam esses dois tipos.
@@ -107,6 +111,15 @@ REPRODUCTION_EVENTS = frozenset(
         EventType.REPRODUCTION_STARTED,
         EventType.REPRODUCTION_ATTEMPT_FINISHED,
         EventType.REPRODUCTION_VERDICT,
+    }
+)
+# Gravados só pelo coordenador autônomo, inclusive após o fim da run, sempre com chave idempotente.
+AUTONOMOUS_EVENTS = frozenset(
+    {
+        EventType.AUTONOMOUS_TRIGGERED,
+        EventType.AUTONOMOUS_DEQUEUED,
+        EventType.AUTONOMOUS_COMPARED,
+        EventType.AUTONOMOUS_NOTIFICATION,
     }
 )
 
@@ -557,6 +570,7 @@ class ReportKind(StrEnum):
     FINAL = "final"
     PARTIAL = "partial"
     PUBLIC = "public"
+    AUTONOMOUS = "autonomous"
 
 
 class SnapshotStatus(StrEnum):

@@ -140,6 +140,10 @@ A suspected finding only becomes `confirmed` after independent reproduction: whe
 
 With the optional `obs` extra, a profile can opt in to export each run as one OpenTelemetry trace to Langfuse, self-hosted with `lastro obs up` or on Langfuse Cloud. Spans mirror the committed events one to one (memory lookup, observation, action, policy evaluation, approval, verification, reproduction, consolidation), carry only allowlisted, redacted attributes and, for the native executor, model, tokens, latency and cost per attempt; external executors mark model data as unavailable. Export failures never change a run; pending spans are retried with `lastro obs export <run id>`, and private reports link to the trace. Observability is disabled by default and makes no network call when off. See [docs/observability.md](docs/observability.md).
 
+## Autonomous mode
+
+`lastro schedule add --daily 07:00 --mission missions/daily.md --profile homolog` registers a daily run with Windows Task Scheduler or cron, `lastro autonomous trigger` starts one after a successful deployment reported by GitHub Actions, and `lastro autonomous run` starts one headless. Triggers go to a durable queue with one active run and up to three pending items per profile. Autonomous runs never approve an action and never invent answers to clarifications. Each run is compared with the previous comparable run (findings labeled `new`, `recurring`, `resolved` or `regressed` by a deterministic matcher), gets an autonomous report that opens with the comparison, and sends a summary of at most 20 lines to Slack, Microsoft Teams or SMTP. The repository runs the demo mission autonomously on every push to `main` and publishes the report as a workflow artifact. See [docs/autonomous-mode.md](docs/autonomous-mode.md).
+
 ## Roadmap
 
 Each release adds one capability and ends with a measurable result.

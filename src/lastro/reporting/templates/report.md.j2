@@ -98,7 +98,52 @@ Documentation states what the system should do; only the observed result below s
 {% endif %}
 {% endmacro %}
 {% set public = report.kind == "public" %}
-# Lastro report: {{ report.run_id }}{% if report.kind == "partial" %} (partial){% endif %}
+# Lastro report: {{ report.run_id }}{% if report.kind == "partial" %} (partial){% elif report.kind == "autonomous" %} (autonomous){% endif %}
+
+{% if report.comparison %}
+
+## Comparison with the previous run
+
+- Trigger: {{ report.comparison.trigger }}
+- Status: {{ report.comparison.status }}
+{% if report.comparison.baseline_run_id %}
+- Baseline run: {{ report.comparison.baseline_run_id | code }}
+{% else %}
+- Baseline run: none
+{% endif %}
+- New: {{ report.comparison.new }} · Regressed: {{ report.comparison.regressed }} · Recurring: {{ report.comparison.recurring }} · Resolved: {{ report.comparison.resolved }}
+{% if report.comparison.not_comparable %}
+- Not comparable: {{ report.comparison.not_comparable }}
+{% endif %}
+- Actions skipped awaiting approval: {{ report.comparison.skipped_approvals }}
+- Clarification gaps left unanswered: {{ report.comparison.clarification_gaps }}
+- Matching: {{ report.comparison.algorithm | code }} (deterministic; same flow only)
+{% if report.comparison.coverage %}
+
+**Coverage by flow**
+
+{% for flow, state in report.comparison.coverage %}
+- {{ flow | inline }}: {{ state }}
+{% endfor %}
+{% endif %}
+{% if report.comparison.items %}
+
+**Findings by change**
+
+{% for item in report.comparison.items %}
+- {{ item.label }} · {{ item.flow | inline }} · {{ item.title | inline }}{% if item.finding_id %} ({{ item.finding_id | code }}){% endif %}{% if item.previous_finding_id %}, previous {{ item.previous_finding_id | code }}{% endif %}{% if item.score is not none %}, score {{ "%.2f" | format(item.score) }}{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if report.comparison.limitations %}
+
+**Comparison limitations**
+
+{% for limitation in report.comparison.limitations %}
+- {{ limitation | inline }}
+{% endfor %}
+{% endif %}
+{% endif %}
 
 
 ## Summary

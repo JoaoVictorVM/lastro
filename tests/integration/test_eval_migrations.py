@@ -29,7 +29,7 @@ def test_upgrade_v012_preserves_existing_history(tmp_path: Path) -> None:
     )
     before = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
     conn.close()
-    assert apply_migrations(database) == [13, 14]
+    assert apply_migrations(database) == [13, 14, 15]
     conn = connect(path)
     row = conn.execute("SELECT * FROM eval_results WHERE id = 'legacy'").fetchone()
     assert row is not None
@@ -42,7 +42,7 @@ def test_upgrade_v012_preserves_existing_history(tmp_path: Path) -> None:
     created = {(item[0], item[1]) for item in other.execute("SELECT type, name FROM sqlite_master")}
     other.close()
     assert upgraded == created
-    assert schema_version(database) == 14
+    assert schema_version(database) == 15
 
 
 def test_migration_failure_rolls_back(tmp_path: Path) -> None:

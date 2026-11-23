@@ -18,6 +18,7 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
+from lastro.config.autonomous import AutonomousSettings
 from lastro.config.limits import RunLimits
 from lastro.config.native import NativeSettings
 from lastro.config.observability import ObservabilitySettings
@@ -386,6 +387,7 @@ class LastroConfig(BaseModel):
     executor: NonEmptyText = DEFAULT_EXECUTOR
     demo: DemoSettings = Field(default_factory=DemoSettings)
     source: SourceSettings = Field(default_factory=SourceSettings)
+    autonomous: AutonomousSettings = Field(default_factory=AutonomousSettings)
     profiles: dict[str, Profile]
 
     @field_validator("timezone")

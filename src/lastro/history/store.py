@@ -45,6 +45,7 @@ from lastro.history.artifacts import (
     resolve_inside,
     store_file,
 )
+from lastro.history.autonomous import AutonomousRepository
 from lastro.history.backup import BackupResult, create_backup
 from lastro.history.change_context import (
     CONTEXT_INTEGRITY,
@@ -100,6 +101,7 @@ from lastro.history.mission_plans import (
     INVALID_PLAN,
     INVALID_REFERENCE,
     answer_clarification,
+    answer_unavailable,
     blocking_gap,
     make_cursor,
     mission_content,
@@ -335,6 +337,11 @@ class HistoryStore:
     def evaluations(self) -> EvalRepository:
         """Registro das suites de avaliação deste projeto."""
         return EvalRepository(self._database, self._clock, self._entropy)
+
+    @property
+    def autonomous(self) -> AutonomousRepository:
+        """Agendas, fila, comparação e outbox do modo autônomo deste projeto."""
+        return AutonomousRepository(self._database, self._clock, self.project_id)
 
     @property
     def sources(self) -> SourceRepository:
@@ -1152,6 +1159,13 @@ class HistoryStore:
         timestamp = self._now()
         return self._database.write(
             lambda conn: answer_clarification(conn, clarification_id, answer, timestamp)
+        )
+
+    def answer_clarification_unavailable(self, clarification_id: str) -> Clarification:
+        """Run unattended: resposta de sistema sem valor de negócio; a lacuna continua aberta."""
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: answer_unavailable(conn, clarification_id, timestamp)
         )
 
     def list_clarifications(self, run_id: str) -> list[Clarification]:
