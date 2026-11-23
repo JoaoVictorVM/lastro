@@ -559,6 +559,19 @@ class AutonomousRepository:
 
         return self._write(write)
 
+    def set_external(self, schedule_id: str, backend: str, external_id: str) -> ScheduleDefinition:
+        now = self._now()
+
+        def write(conn: sqlite3.Connection) -> ScheduleDefinition:
+            conn.execute(
+                "UPDATE autonomous_schedules SET backend = ?, external_id = ?, updated_at = ? "
+                "WHERE id = ?",
+                (backend, external_id, now, schedule_id),
+            )
+            return _schedule(_select_schedule(conn, schedule_id))
+
+        return self._write(write)
+
     def find_schedule(self, reference: str) -> ScheduleDefinition | None:
         def read(conn: sqlite3.Connection) -> ScheduleDefinition | None:
             row = conn.execute(
