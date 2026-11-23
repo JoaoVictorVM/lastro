@@ -75,9 +75,9 @@ def test_upgrade_v013_without_optional_extras(
     )
     conn.close()
 
-    assert apply_migrations(database) == [14]
+    assert apply_migrations(database) == [14, 15]
 
-    assert schema_version(database) == 14
+    assert schema_version(database) == 15
     assert _tables(path) >= SOURCE_TABLES
     conn = _connect(path)
     try:
@@ -100,7 +100,7 @@ def test_migration_rollback_and_immutable_checksums(tmp_path: Path) -> None:
 
     assert schema_version(database) == 13
     assert not (_tables(path) & SOURCE_TABLES)
-    assert apply_migrations(database) == [14]
+    assert apply_migrations(database) == [14, 15]
 
 
 def _seed(conn: sqlite3.Connection) -> None:

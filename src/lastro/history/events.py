@@ -9,6 +9,7 @@ from typing import cast
 
 from lastro.history.errors import InvalidEventError
 from lastro.history.models import (
+    AUTONOMOUS_EVENTS,
     CORRELATED_EVENTS,
     EventRecord,
     EventType,
@@ -89,7 +90,9 @@ def prepare_event(
         raise InvalidEventError("evento policy_decision exige a decisão")
     if kind != EventType.POLICY_DECISION and decision is not None:
         raise InvalidEventError("decisão de política só é aceita em evento policy_decision")
-    correlated = correlation_id is not None or idempotency_key is not None
+    # Eventos autônomos usam a chave idempotente para não duplicar após retomada do worker.
+    keyed = idempotency_key is not None and kind not in AUTONOMOUS_EVENTS
+    correlated = correlation_id is not None or keyed
     if kind not in CORRELATED_EVENTS and correlated:
         raise InvalidEventError("correlation id e idempotency key só valem para tool e policy")
     if kind == EventType.AUTHENTICATION:

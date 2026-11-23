@@ -45,6 +45,7 @@ from lastro.history.artifacts import (
     resolve_inside,
     store_file,
 )
+from lastro.history.autonomous import AutonomousRepository
 from lastro.history.backup import BackupResult, create_backup
 from lastro.history.change_context import (
     CONTEXT_INTEGRITY,
@@ -335,6 +336,11 @@ class HistoryStore:
     def evaluations(self) -> EvalRepository:
         """Registro das suites de avaliação deste projeto."""
         return EvalRepository(self._database, self._clock, self._entropy)
+
+    @property
+    def autonomous(self) -> AutonomousRepository:
+        """Agendas, fila, comparação e outbox do modo autônomo deste projeto."""
+        return AutonomousRepository(self._database, self._clock, self.project_id)
 
     @property
     def sources(self) -> SourceRepository:
