@@ -1,0 +1,79 @@
+name: Autonomous post-deploy (example)
+
+# Exemplo para copiar no repositório do sistema testado. Neste repositório ele nunca dispara:
+# não existe o workflow "Deploy homolog" nem o ambiente homolog.
+#
+# Segurança:
+# - workflow_run dispara para qualquer conclusão; o job filtra `success` explicitamente.
+# - deployment_status só segue com estado `success` no ambiente configurado.
+# - Nada do workflow anterior é baixado nem executado; o checkout é da branch padrão, sem
+#   credenciais persistidas, e o token tem só `contents: read`.
+# - Missão e perfil vêm deste arquivo confiável; o Lastro lê apenas campos em allowlist do
+#   evento e recusa missão, perfil, executor ou webhook vindos dele.
+on:
+  workflow_run:
+    workflows: ["Deploy homolog"]
+    types: [completed]
+  deployment_status:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lastro-autonomous-homolog
+  cancel-in-progress: false
+
+jobs:
+  explore:
+    if: >-
+      (github.event_name == 'workflow_run'
+        && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.head_branch == 'main')
+      || (github.event_name == 'deployment_status'
+        && github.event.deployment_status.state == 'success'
+        && github.event.deployment_status.environment == 'homolog')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: homolog
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Lastro and Chromium
+        run: |
+          uv tool install "lastro[native] @ git+https://github.com/JoaoVictorVM/lastro"
+          uvx --from playwright playwright install --with-deps chromium
+
+      - name: Trigger the autonomous mission
+        id: lastro
+        env:
+          HOMOLOG_USERNAME: ${{ secrets.HOMOLOG_USERNAME }}
+          HOMOLOG_PASSWORD: ${{ secrets.HOMOLOG_PASSWORD }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LASTRO_SLACK_WEBHOOK: ${{ secrets.LASTRO_SLACK_WEBHOOK }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          lastro --profile homolog autonomous trigger \
+            --event-file "$GITHUB_EVENT_PATH" \
+            --event-name "$EVENT_NAME" \
+            --mission-file missions/post-deploy.md \
+            --json | tee "$RUNNER_TEMP/lastro.json"
+          report="$(jq -r '.report // empty' "$RUNNER_TEMP/lastro.json")"
+          mkdir -p "$RUNNER_TEMP/lastro-report"
+          if [ -n "$report" ]; then cp "$report" "$RUNNER_TEMP/lastro-report/"; fi
+
+      - name: Upload the autonomous report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lastro-autonomous-homolog
+          path: ${{ runner.temp }}/lastro-report
+          if-no-files-found: warn
+          retention-days: 14
