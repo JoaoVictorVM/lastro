@@ -45,14 +45,19 @@ type BackendFactory = Callable[[], SchedulerBackend]
 type Drain = Callable[[LoadedConfig, HistoryStore, str], None]
 
 
-def _no_drain(loaded: LoadedConfig, store: HistoryStore, profile: str) -> None:
-    return None
+def _default_drain(loaded: LoadedConfig, store: HistoryStore, profile: str) -> None:
+    from lastro.autonomous.notifications import Outbox
+    from lastro.autonomous.runner import drain_profile
+
+    drain_profile(loaded, store, profile, write=output.info)
+    # Um tick posterior drena entregas vencidas mesmo quando nenhuma agenda venceu.
+    Outbox(store, loaded.config.autonomous).deliver_due()
 
 
 # Pontos de injeção: os testes nunca tocam o Task Scheduler nem a crontab da máquina.
 backend_factory: BackendFactory = default_backend
 # Worker que drena a fila do perfil depois do tick; o coordenador autônomo o substitui.
-drain: Drain = _no_drain
+drain: Drain = _default_drain
 
 schedule_app = typer.Typer(
     help="Agenda diária de missões autônomas (Task Scheduler ou cron).",

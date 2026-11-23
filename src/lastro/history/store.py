@@ -101,6 +101,7 @@ from lastro.history.mission_plans import (
     INVALID_PLAN,
     INVALID_REFERENCE,
     answer_clarification,
+    answer_unavailable,
     blocking_gap,
     make_cursor,
     mission_content,
@@ -1158,6 +1159,13 @@ class HistoryStore:
         timestamp = self._now()
         return self._database.write(
             lambda conn: answer_clarification(conn, clarification_id, answer, timestamp)
+        )
+
+    def answer_clarification_unavailable(self, clarification_id: str) -> Clarification:
+        """Run unattended: resposta de sistema sem valor de negócio; a lacuna continua aberta."""
+        timestamp = self._now()
+        return self._database.write(
+            lambda conn: answer_unavailable(conn, clarification_id, timestamp)
         )
 
     def list_clarifications(self, run_id: str) -> list[Clarification]:

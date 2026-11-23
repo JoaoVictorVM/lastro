@@ -9,7 +9,7 @@ import json
 import re
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -47,6 +47,7 @@ from lastro.history.errors import UnsafeArtifactPathError
 from lastro.reporting.models import (
     BlockView,
     ChangeContextView,
+    ComparisonView,
     ConflictSideView,
     ConflictView,
     CreatedRecordView,
@@ -72,8 +73,13 @@ REPORT_PATHS = {
     ReportKind.FINAL: "report.md",
     ReportKind.PARTIAL: "report.partial.md",
     ReportKind.PUBLIC: "report.public.md",
+    ReportKind.AUTONOMOUS: "report.autonomous.md",
 }
-FALLBACK_PATHS = {ReportKind.FINAL: "report.json", ReportKind.PARTIAL: "report.partial.json"}
+FALLBACK_PATHS = {
+    ReportKind.FINAL: "report.json",
+    ReportKind.PARTIAL: "report.partial.json",
+    ReportKind.AUTONOMOUS: "report.autonomous.json",
+}
 ISSUES_DIR = "issues"
 RUN_NOT_TERMINAL = "run_not_terminal"
 MEMORY_LEGACY = "not recorded: this run predates persistent memory."
@@ -165,6 +171,8 @@ def data_sha256(data: ReportData) -> str:
         content.pop("source_conflicts", None)
     if not content.get("documentation_queries"):
         content.pop("documentation_queries", None)
+    if content.get("comparison") is None:
+        content.pop("comparison", None)
     for group in ("confirmed", "suspected", "harness_failures"):
         for item in cast(list[dict[str, Any]], content.get(group) or []):
             _strip_finding_defaults(item)
@@ -761,6 +769,16 @@ class ReportBuilder:
         """Para runs terminalizadas por limites ou cancelamento, e para diagnóstico explícito."""
         return self._build(run_id, ReportKind.PARTIAL, termination_reason)
 
+    def build_autonomous(self, run_id: str, comparison: ComparisonView) -> ReportOutcome:
+        """Snapshot próprio da run autônoma: comparação no topo e o relatório completo depois.
+
+        Nunca sobrescreve o relatório final nem um autônomo anterior com outras entradas.
+        """
+        record = self.history.get_run(run_id)
+        if not record.status.is_terminal:
+            raise ReportingError(RUN_NOT_TERMINAL, "The autonomous report needs a finished run.")
+        return self._build(run_id, ReportKind.AUTONOMOUS, record.status_reason, comparison)
+
     def render_report(self, data: ReportData) -> str:
         return self.env.get_template("report.md.j2").render(report=data)
 
@@ -769,10 +787,18 @@ class ReportBuilder:
             finding=finding, environment=data.environment
         )
 
-    def _build(self, run_id: str, kind: ReportKind, reason: str | None) -> ReportOutcome:
+    def _build(
+        self,
+        run_id: str,
+        kind: ReportKind,
+        reason: str | None,
+        comparison: ComparisonView | None = None,
+    ) -> ReportOutcome:
         started = self.clock()
         run_dir = self.history.run_dir(run_id)
         data = project(self.history.report_inputs(run_id), run_dir, kind, reason)
+        if comparison is not None:
+            data = replace(data, comparison=comparison)
         digest = data_sha256(data)
         verdicts = sum(
             1

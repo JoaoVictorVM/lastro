@@ -502,6 +502,37 @@ class EnvironmentView:
 
 
 @dataclass(frozen=True)
+class ComparisonItemView:
+    label: str
+    flow: str
+    finding_id: str | None
+    previous_finding_id: str | None
+    title: str
+    score: float | None
+    match_rule: str
+
+
+@dataclass(frozen=True)
+class ComparisonView:
+    """Comparação autônoma projetada antes dos achados completos; ids resolvidos no histórico."""
+
+    status: str
+    trigger: str
+    baseline_run_id: str | None
+    algorithm: str
+    new: int
+    regressed: int
+    recurring: int
+    resolved: int
+    not_comparable: int
+    coverage: tuple[tuple[str, str], ...]
+    items: tuple[ComparisonItemView, ...]
+    limitations: tuple[str, ...]
+    skipped_approvals: int = 0
+    clarification_gaps: int = 0
+
+
+@dataclass(frozen=True)
 class ReportData:
     """Projeção determinística do histórico; o hash destes dados identifica o snapshot."""
 
@@ -531,3 +562,5 @@ class ReportData:
     trace: TraceView | None = None
     source_conflicts: tuple[ConflictView, ...] = ()
     documentation_queries: int = 0
+    # Somente no relatório autônomo; demais kinds mantêm o digest anterior.
+    comparison: ComparisonView | None = None
